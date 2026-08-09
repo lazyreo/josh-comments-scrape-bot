@@ -15,6 +15,7 @@ from bot.utils.helpers import (
     is_transfer_cancelled,
     progress_for_pyrogram,
 )
+from bot.utils.text_replacements import apply_text_replacements
 from database import db
 
 
@@ -23,28 +24,51 @@ async def forward_message(
 ):
     """Forward a message to config['dest'] using the session client only."""
     dest = config["dest"]
+    rules = config.get("text_replacements") or []
     log = None
     file_path = None
 
-    with suppress(Exception):
-        sent = await app.forward_messages(dest, message.chat.id, message.id)
-        log = sent[0] if isinstance(sent, list) else sent
-
-    if not log:
-        with suppress(Exception):
-            log = await message.copy(chat_id=dest)
-
-    if not log:
-        if message.text:
-            log = await app.send_message(chat_id=dest, text=message.text.html)
+    raw = message.text or message.caption
+    if rules and raw:
+        new_text = apply_text_replacements(str(raw), rules)
+        if message.media:
+            with suppress(Exception):
+                log = await message.copy(chat_id=dest, caption=new_text)
+            if not log:
+                file_path = await download_media(bot, user_id, message)
+                if file_path:
+                    log, file_path = await upload_media(
+                        user_id,
+                        bot,
+                        app,
+                        file_path,
+                        message,
+                        config,
+                        caption=new_text,
+                    )
         else:
-            file_path = await download_media(bot, user_id, message)
-            if file_path:
-                log, file_path = await upload_media(
-                    user_id, bot, app, file_path, message, config
-                )
+            with suppress(Exception):
+                log = await app.send_message(chat_id=dest, text=new_text)
+    else:
+        with suppress(Exception):
+            sent = await app.forward_messages(dest, message.chat.id, message.id)
+            log = sent[0] if isinstance(sent, list) else sent
+
+        if not log:
+            with suppress(Exception):
+                log = await message.copy(chat_id=dest)
+
+        if not log:
+            if message.text:
+                log = await app.send_message(chat_id=dest, text=message.text.html)
             else:
-                return
+                file_path = await download_media(bot, user_id, message)
+                if file_path:
+                    log, file_path = await upload_media(
+                        user_id, bot, app, file_path, message, config
+                    )
+                else:
+                    return
 
     if not log:
         return await bot.send_message(
@@ -105,6 +129,7 @@ async def upload_media(
     file_path: str,
     message: types.Message,
     config: dict,
+    caption: str | None = None,
 ):
     out = await bot.floodwait_handler(bot.send_message, user_id, "Starting upload...")
     target_channel = config["dest"]
@@ -145,11 +170,19 @@ async def upload_media(
         f"Uploading ({message.index})",
     )
 
-    caption = message.text or message.caption
-    if caption:
-        kwargs["caption"] = caption.html if hasattr(caption, "html") else caption
+    if caption is not None:
+        kwargs["caption"] = caption
     else:
-        kwargs["caption"] = None
+        original = message.text or message.caption
+        rules = config.get("text_replacements") or []
+        if original and rules:
+            kwargs["caption"] = apply_text_replacements(str(original), rules)
+        elif original:
+            kwargs["caption"] = (
+                original.html if hasattr(original, "html") else original
+            )
+        else:
+            kwargs["caption"] = None
 
     await bot.floodwait_handler(out.edit, "Uploading...")
 

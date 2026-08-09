@@ -42,7 +42,11 @@ async def get_config_from_dest_link(
 
     if len(source_configs) == 1:
         row = source_configs[0]
-        return {"source": row["source_id"], "dest": row["dest_id"]}
+        return {
+            "source": row["source_id"],
+            "dest": row["dest_id"],
+            "text_replacements": row.get("text_replacements") or [],
+        }
 
     text = f"📍 Found {len(source_configs)} destinations for this source.\n\n"
     text += "Available destinations:\n"
@@ -67,7 +71,11 @@ async def get_config_from_dest_link(
 
     for row in source_configs:
         if row.get("dest_id") == dest_chat_id:
-            return {"source": row["source_id"], "dest": row["dest_id"]}
+            return {
+                "source": row["source_id"],
+                "dest": row["dest_id"],
+                "text_replacements": row.get("text_replacements") or [],
+            }
 
     await message.reply_text(f"❌ No forward for destination: {dest_chat_id}")
     return None

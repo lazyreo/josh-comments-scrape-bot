@@ -283,19 +283,44 @@ async def add_forward(bot: Client, message: CallbackQuery):
     return await message.message.reply_text(text, reply_markup=back)
 
 
+def _format_replacements(rules: list[dict]) -> str:
+    if not rules:
+        return "_No replacements set._\n"
+    lines = []
+    for i, rule in enumerate(rules, 1):
+        source = rule.get("source") or ""
+        target = rule.get("target")
+        if target is None:
+            target = ""
+        lines.append(f"{i}. `{source}` → `{target}`")
+    return "\n".join(lines) + "\n"
+
+
+async def _get_owned_forward(query: CallbackQuery, _id: ObjectId) -> dict | None:
+    row = await db.user_forwards.filter_document({"_id": _id})
+    if not row or row["user_id"] != query.from_user.id:
+        await query.answer("Not found", show_alert=True)
+        return None
+    return row
+
+
 @Client.on_callback_query(filters.regex(r"^view_forward "))
 async def view_forward(_, message: CallbackQuery):
     _id = ObjectId(message.data.split()[1])
-    row = await db.user_forwards.filter_document({"_id": _id})
-    if not row or row["user_id"] != message.from_user.id:
-        return await message.answer("Not found", show_alert=True)
+    row = await _get_owned_forward(message, _id)
+    if not row:
+        return
+
+    rules = row.get("text_replacements") or []
 
     text = "**Forward details**\n\n"
     text += f"📥 Source: {row['source_title']}\n"
     text += f"   `{row['source_id']}`\n"
     text += f"📤 Destination: {row['dest_title']}\n"
     text += f"   `{row['dest_id']}`\n"
-    text += f"📊 Status: {'✅ Active' if row['status'] else '❌ Inactive'}\n"
+    text += f"📊 Status: {'✅ Active' if row['status'] else '❌ Inactive'}\n\n"
+    text += f"🔤 **Replacements** ({len(rules)}):\n"
+    text += _format_replacements(rules)
 
     buttons = [
         [
@@ -307,10 +332,194 @@ async def view_forward(_, message: CallbackQuery):
                 "🗑️ Delete", callback_data=f"delete_forward {_id}"
             ),
         ],
+        [
+            InlineKeyboardButton(
+                "🔤 Replacements", callback_data=f"manage_replacements {_id}"
+            )
+        ],
     ]
     buttons.append([InlineKeyboardButton("🔙 Back", callback_data="forwards")])
 
     await message.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+@Client.on_callback_query(filters.regex(r"^manage_replacements "))
+async def manage_replacements(_, message: CallbackQuery):
+    _id = ObjectId(message.data.split()[1])
+    row = await _get_owned_forward(message, _id)
+    if not row:
+        return
+
+    rules = row.get("text_replacements") or []
+    text = (
+        f"🔤 **Replacements**\n\n"
+        f"{row['source_title']} → {row['dest_title']}\n\n"
+        f"{_format_replacements(rules)}"
+    )
+
+    buttons = []
+    for i, rule in enumerate(rules):
+        source = (rule.get("source") or "")[:24]
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    f"✏️ {i + 1}. {source}",
+                    callback_data=f"edit_repl {_id} {i}",
+                ),
+                InlineKeyboardButton(
+                    "🗑️",
+                    callback_data=f"del_repl {_id} {i}",
+                ),
+            ]
+        )
+    buttons.append(
+        [InlineKeyboardButton("➕ Add", callback_data=f"add_repl {_id}")]
+    )
+    buttons.append(
+        [InlineKeyboardButton("🔙 Back", callback_data=f"view_forward {_id}")]
+    )
+
+    await message.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+
+@Client.on_callback_query(filters.regex(r"^add_repl "))
+async def add_repl(bot: Client, message: CallbackQuery):
+    _id = ObjectId(message.data.split()[1])
+    row = await _get_owned_forward(message, _id)
+    if not row:
+        return
+
+    await message.answer()
+    user_id = message.from_user.id
+    chat = message.message.chat
+    back = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🔙 Back", callback_data=f"manage_replacements {_id}")]]
+    )
+
+    async def cancelled():
+        return await chat.send_message("❌ Cancelled", reply_markup=back)
+
+    try:
+        ask = await chat.ask(
+            "🔤 **Source text**\n\n"
+            "Send the text to find (literal match).",
+            user_id=user_id,
+            reply_markup=_CANCEL_MARKUP,
+        )
+    except ListenerStopped:
+        return await cancelled()
+    except Exception as e:
+        return await message.message.reply_text(f"🚫 Error: {e}", reply_markup=back)
+
+    source_text = ask.text or ""
+    if not source_text.strip():
+        return await ask.reply("⚠️ Source text cannot be empty.", reply_markup=back)
+
+    try:
+        ask = await chat.ask(
+            "🔤 **Replacement text**\n\n"
+            "Send the text to replace it with "
+            "(send a space to delete the match).",
+            user_id=user_id,
+            reply_markup=_CANCEL_MARKUP,
+        )
+    except ListenerStopped:
+        return await cancelled()
+    except Exception as e:
+        return await message.message.reply_text(f"🚫 Error: {e}", reply_markup=back)
+
+    target_text = ask.text if ask.text is not None else ""
+    rules = list(row.get("text_replacements") or [])
+    rules.append({"source": source_text, "target": target_text})
+    await db.user_forwards.update(_id, {"text_replacements": rules})
+
+    message.data = f"manage_replacements {_id}"
+    await chat.send_message("✅ Replacement added.")
+    await manage_replacements(bot, message)
+
+
+@Client.on_callback_query(filters.regex(r"^edit_repl "))
+async def edit_repl(bot: Client, message: CallbackQuery):
+    parts = message.data.split()
+    _id = ObjectId(parts[1])
+    index = int(parts[2])
+    row = await _get_owned_forward(message, _id)
+    if not row:
+        return
+
+    rules = list(row.get("text_replacements") or [])
+    if index < 0 or index >= len(rules):
+        return await message.answer("Rule not found", show_alert=True)
+
+    await message.answer()
+    user_id = message.from_user.id
+    chat = message.message.chat
+    back = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🔙 Back", callback_data=f"manage_replacements {_id}")]]
+    )
+
+    async def cancelled():
+        return await chat.send_message("❌ Cancelled", reply_markup=back)
+
+    current = rules[index]
+    try:
+        ask = await chat.ask(
+            "🔤 **Source text**\n\n"
+            f"Current: `{current.get('source') or ''}`\n\n"
+            "Send the new text to find (literal match).",
+            user_id=user_id,
+            reply_markup=_CANCEL_MARKUP,
+        )
+    except ListenerStopped:
+        return await cancelled()
+    except Exception as e:
+        return await message.message.reply_text(f"🚫 Error: {e}", reply_markup=back)
+
+    source_text = ask.text or ""
+    if not source_text.strip():
+        return await ask.reply("⚠️ Source text cannot be empty.", reply_markup=back)
+
+    try:
+        ask = await chat.ask(
+            "🔤 **Replacement text**\n\n"
+            f"Current: `{current.get('target') if current.get('target') is not None else ''}`\n\n"
+            "Send the new replacement "
+            "(send a space to delete the match).",
+            user_id=user_id,
+            reply_markup=_CANCEL_MARKUP,
+        )
+    except ListenerStopped:
+        return await cancelled()
+    except Exception as e:
+        return await message.message.reply_text(f"🚫 Error: {e}", reply_markup=back)
+
+    target_text = ask.text if ask.text is not None else ""
+    rules[index] = {"source": source_text, "target": target_text}
+    await db.user_forwards.update(_id, {"text_replacements": rules})
+
+    message.data = f"manage_replacements {_id}"
+    await chat.send_message("✅ Replacement updated.")
+    await manage_replacements(bot, message)
+
+
+@Client.on_callback_query(filters.regex(r"^del_repl "))
+async def del_repl(bot: Client, message: CallbackQuery):
+    parts = message.data.split()
+    _id = ObjectId(parts[1])
+    index = int(parts[2])
+    row = await _get_owned_forward(message, _id)
+    if not row:
+        return
+
+    rules = list(row.get("text_replacements") or [])
+    if index < 0 or index >= len(rules):
+        return await message.answer("Rule not found", show_alert=True)
+
+    rules.pop(index)
+    await db.user_forwards.update(_id, {"text_replacements": rules})
+    await message.answer("Deleted")
+    message.data = f"manage_replacements {_id}"
+    await manage_replacements(bot, message)
 
 
 @Client.on_callback_query(filters.regex(r"^delete_forward "))

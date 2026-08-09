@@ -9,6 +9,7 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 
 from bot.utils.forward_sources import is_active_source_chat
+from bot.utils.text_replacements import apply_text_replacements
 from database import db
 
 logger = logging.getLogger(__name__)
@@ -22,8 +23,27 @@ async def _session_user_id(client: Client) -> int | None:
     return user["_id"]
 
 
-async def _send_to_dest(client: Client, message: Message, dest_id: int):
+async def _send_to_dest(
+    client: Client,
+    message: Message,
+    dest_id: int,
+    text_replacements: list | None = None,
+):
     """Forward via session; fall back to copy, then text/caption re-send."""
+    rules = text_replacements or []
+    raw = message.text or message.caption
+    if rules and raw:
+        new_text = apply_text_replacements(str(raw), rules)
+        if message.media:
+            with suppress(Exception):
+                return await message.copy(chat_id=dest_id, caption=new_text)
+            with suppress(Exception):
+                return await client.send_message(dest_id, new_text)
+            return None
+        with suppress(Exception):
+            return await client.send_message(dest_id, new_text)
+        return None
+
     with suppress(Exception):
         sent = await client.forward_messages(dest_id, message.chat.id, message.id)
         return sent[0] if isinstance(sent, list) else sent
@@ -71,8 +91,9 @@ async def on_channel_message(client: Client, message: Message):
 
     for fwd in forwards:
         dest_id = fwd["dest_id"]
+        rules = fwd.get("text_replacements") or []
         try:
-            log = await _send_to_dest(client, message, dest_id)
+            log = await _send_to_dest(client, message, dest_id, rules)
         except Exception as e:
             logger.warning(
                 "Forward failed %s -> %s for user %s: %s",
