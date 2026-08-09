@@ -108,7 +108,15 @@ class Bot(Client):
 
         ContextVariables.BOT = self
 
+        if hasattr(self, "sc") and not self.sc.running:
+            from bot.utils import resume_transfers
+
+            self.sc.start()
+            self.sc.add_job(resume_transfers, args=[self])
+
     async def stop(self, *args):
+        if hasattr(self, "sc") and self.sc.running:
+            self.sc.shutdown(wait=False)
         await asyncio.gather(
             *[self.suppress(c.stop) for c in settings.CLIENTS.values()]
         )
