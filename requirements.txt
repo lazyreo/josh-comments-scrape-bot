@@ -9,4 +9,3 @@ Requests==2.32.3
 uvloop==0.19.0; sys_platform != 'win32'
 tabulate
 pydantic-settings==2.5.2
-resend

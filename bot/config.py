@@ -25,9 +25,6 @@ class Config(BaseSettings):
     DATABASE_URL: Optional[str] = None
     OWNER_ID: int
 
-    RESEND_API_KEY: str
-    RESEND_FROM: str
-
     SLEEP_TIME: int = 10
 
     CLIENTS: Dict[Any, Any] = Field(default_factory=dict, exclude=True)
@@ -43,42 +40,42 @@ class ContextVariables(object):
 
 
 class Script(object):
-    START_MESSAGE = """💾 **Bem-vindo!**
+    START_MESSAGE = """💾 **Welcome!**
 
-Este bot encaminha mensagens de um chat de **Origem** para um chat de **Destino** usando a sua conta do Telegram conectada. Você também pode receber cópias por e-mail com o Resend.
+This bot forwards messages from a **Source** chat to a **Destination** chat using your connected Telegram account.
 
-**Passos simples:**
-1. **Entrar** — toque em Conta (ou /account)
-2. **Adicionar um encaminhamento** — toque em Encaminhamentos → escolha Origem e Destino
-3. Novas mensagens da Origem são copiadas para o Destino com a sua conta
+**Simple steps:**
+1. **Log in** — tap Account (or /account)
+2. **Add a forward** — tap Forwards → choose Source and Destination
+3. New messages from the Source are copied to the Destination with your account
 
-Você também pode colar um link `t.me` para encaminhar a mensagem (se essa Origem tiver um encaminhamento configurado)."""
+You can also paste a `t.me` link to forward that message (if that Source has a forward configured)."""
 
-    RESTART_MESSAGE = "🔄 **O bot está reiniciando. Baixe novamente seus arquivos em andamento em alguns segundos.**"
+    RESTART_MESSAGE = "🔄 **The bot is restarting. Re-download your in-progress files in a few seconds.**"
 
-    HELP_MESSAGE_1 = """**💡 Ajuda**
+    HELP_MESSAGE_1 = """**💡 Help**
 
-1. **/account** — Entre com a conta do Telegram que consegue ver a Origem e publicar no Destino.
+1. **/account** — Log in with the Telegram account that can see the Source and post to the Destination.
 
-2. **Encaminhamentos** — toque em Encaminhamentos → Adicionar.
-   Envie a Origem (@usuário, id ou uma mensagem encaminhada) e depois o Destino da mesma forma.
+2. **Forwards** — tap Forwards → Add.
+   Send the Source (@username, id, or a forwarded message), then the Destination the same way.
 
-3. **Colar um link** — Envie um link `https://t.me/...` para encaminhar aquela mensagem através de um encaminhamento Origem → Destino já configurado.
+3. **Paste a link** — Send a `https://t.me/...` link to forward that message through an existing Source → Destination forward.
 
-Precisa de ajuda? Fale com o suporte.
+Need help? Contact support.
 """
 
     DEFAULT_CAPTION = "{%s}" % CaptionVariables.CAPTION.value
     PROGRESS_MESSAGE = """**╔══❰ {mode} ❱══❍
 ║╭━➣
-║┣⪼ 📊 **Progresso:** {percentage}%
+║┣⪼ 📊 **Progress:** {percentage}%
 ║┣
 ║┣⪼ {progress}
 ║┣
-║┣⪼ **Concluído:** {finished} de {total}
+║┣⪼ **Done:** {finished} of {total}
 ║┣
-║┣⪼ ⚡ **Velocidade:** {speed}/s
+║┣⪼ ⚡ **Speed:** {speed}/s
 ║┣
-║┣⪼ ⏰ **Tempo restante:** {eta}
+║┣⪼ ⏰ **Time left:** {eta}
 ║╰━➣
 ╚════════════════❍**"""

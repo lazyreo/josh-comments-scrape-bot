@@ -14,7 +14,7 @@ from bot.config import Script
 async def help(bot: Client, message: Message | CallbackQuery):
     markup = InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("🔙 Voltar", callback_data="start")],
+            [InlineKeyboardButton("🔙 Back", callback_data="start")],
         ]
     )
     text = Script.HELP_MESSAGE_1

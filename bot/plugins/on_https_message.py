@@ -25,7 +25,7 @@ def CANCEL_MARKUP(download_id):
         [
             [
                 types.InlineKeyboardButton(
-                    "Cancelar transferência", callback_data=f"cancel {download_id}"
+                    "Cancel transfer", callback_data=f"cancel {download_id}"
                 )
             ]
         ]
@@ -52,7 +52,7 @@ async def on_https_message(bot: Client, message: types.Message, **kwargs):
 
 
     if not is_valid_link(message):
-        return await message.reply_text("Link inválido.")
+        return await message.reply_text("Invalid link.")
 
     user_id = message.from_user.id
 
@@ -71,12 +71,12 @@ async def on_https_message(bot: Client, message: types.Message, **kwargs):
         return await bot.floodwait_handler(
             bot.send_message,
             user_id,
-            "Você precisa entrar primeiro para usar este bot.",
+            "You need to log in first to use this bot.",
             reply_markup=types.InlineKeyboardMarkup(
                 [
                     [
                         types.InlineKeyboardButton(
-                            "Entrar", callback_data="connect_account"
+                            "Log in", callback_data="connect_account"
                         )
                     ],
                 ]
@@ -85,11 +85,11 @@ async def on_https_message(bot: Client, message: types.Message, **kwargs):
 
     links = message.text.split()
     if not links:
-        return await message.reply_text("Nenhum link encontrado.")
+        return await message.reply_text("No links found.")
 
     success, failed = 0, 0
     out = await bot.floodwait_handler(
-        bot.send_message, user_id, f"Processando {len(links)} links..."
+        bot.send_message, user_id, f"Processing {len(links)} links..."
     )
     await (await out.pin(both_sides=True)).delete()
 
@@ -99,7 +99,7 @@ async def on_https_message(bot: Client, message: types.Message, **kwargs):
         if not parts:
             failed += 1
             await bot.floodwait_handler(
-                bot.send_message, user_id, f"Link inválido - {link}"
+                bot.send_message, user_id, f"Invalid link - {link}"
             )
             continue
 
@@ -127,12 +127,12 @@ async def on_https_message(bot: Client, message: types.Message, **kwargs):
             await db.users.remove_session(user_id)
             await out.unpin()
             return await out.edit(
-                "Sua sessão expirou. Entre novamente.",
+                "Your session expired. Log in again.",
                 reply_markup=types.InlineKeyboardMarkup(
                     [
                         [
                             types.InlineKeyboardButton(
-                                "Entrar", callback_data="connected_account"
+                                "Log in", callback_data="connected_account"
                             )
                         ]
                     ]
@@ -141,13 +141,13 @@ async def on_https_message(bot: Client, message: types.Message, **kwargs):
         except Exception as e:
             failed += 1
             print(e)
-            text = "⚠️ Não foi possível acessar o conteúdo!\n\n"
-            text += "🔹 Entre no canal primeiro e tente de novo\n"
-            text += "🔹 Para chats privados:\n"
-            text += "- Na primeira vez: use o @usuário\n"
-            text += "- Depois: você pode usar o ID do usuário\n"
-            text += "🔹 Confirme que você tem acesso a este chat"
-            text += f"\n\n💡 Chat: {chat_id}\n\n💡 Erro: {error_message}"
+            text = "⚠️ Could not access the content!\n\n"
+            text += "🔹 Join the channel first and try again\n"
+            text += "🔹 For private chats:\n"
+            text += "- First time: use the @username\n"
+            text += "- Later: you can use the user ID\n"
+            text += "🔹 Confirm that you have access to this chat"
+            text += f"\n\n💡 Chat: {chat_id}\n\n💡 Error: {error_message}"
 
             await bot.floodwait_handler(bot.send_message, user_id, text)
             if is_batch:
@@ -167,7 +167,7 @@ async def on_https_message(bot: Client, message: types.Message, **kwargs):
             failed += 1
             print(e)
             await bot.floodwait_handler(
-                bot.send_message, user_id, f"Mensagem não encontrada - {link}"
+                bot.send_message, user_id, f"Message not found - {link}"
             )
             continue
 
@@ -178,7 +178,7 @@ async def on_https_message(bot: Client, message: types.Message, **kwargs):
 
         download_id = random.randint(100000, 999999)
         message.download_id = download_id
-        message.index = f"{i} de {len(links)}"
+        message.index = f"{i} of {len(links)}"
 
         await add_transfer_to_queue(
             user_id=user_id,
@@ -190,10 +190,10 @@ async def on_https_message(bot: Client, message: types.Message, **kwargs):
             user_message_chat_id=user_message.chat.id,
         )
 
-        progress_text = f"Baixando: {i} de {len(links)}\n"
-        progress_text += f"Sucesso: {success}\n"
-        progress_text += f"Falhas: {failed}"
-        progress_text += f"\n\nEm andamento: {message.link}"
+        progress_text = f"Downloading: {i} of {len(links)}\n"
+        progress_text += f"Success: {success}\n"
+        progress_text += f"Failed: {failed}"
+        progress_text += f"\n\nIn progress: {message.link}"
 
         await bot.floodwait_handler(
             out.edit_text, progress_text, reply_markup=CANCEL_MARKUP(download_id)
@@ -208,7 +208,7 @@ async def on_https_message(bot: Client, message: types.Message, **kwargs):
             failed += 1
             traceback.print_exc()
             await remove_transfer_from_queue(download_id)
-            await bot.floodwait_handler(bot.send_message, user_id, f"Erro: {e}")
+            await bot.floodwait_handler(bot.send_message, user_id, f"Error: {e}")
             continue
 
         if is_transfer_cancelled(message.download_id):
@@ -223,5 +223,5 @@ async def on_https_message(bot: Client, message: types.Message, **kwargs):
     await bot.floodwait_handler(
         bot.send_message,
         user_id,
-        f"Baixados {i} de {len(links)} links\nSucesso: {success}\nFalhas: {failed}",
+        f"Downloaded {i} of {len(links)} links\nSuccess: {success}\nFailed: {failed}",
     )

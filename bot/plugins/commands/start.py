@@ -12,10 +12,10 @@ async def start(bot: Client, message: Message):
     markup = InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("🔀 Encaminhamentos", callback_data="forwards"),
-                InlineKeyboardButton("👤 Conta", callback_data="connected_account"),
+                InlineKeyboardButton("🔀 Forwards", callback_data="forwards"),
+                InlineKeyboardButton("👤 Account", callback_data="connected_account"),
             ],
-            [InlineKeyboardButton("❓ Ajuda", callback_data="help_1")],
+            [InlineKeyboardButton("❓ Help", callback_data="help_1")],
         ]
     )
 

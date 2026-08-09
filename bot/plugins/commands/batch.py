@@ -29,18 +29,18 @@ async def batch(bot: Client, message: Message):
     if not app or not app.is_connected:
         settings.CLIENTS.pop(app.me.id, None) if app and app.me else None
         return await message.reply_text(
-            "⚠️ Você precisa entrar primeiro para usar este recurso.",
+            "⚠️ You need to log in first to use this feature.",
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔗 Entrar", callback_data="connect_account")]]
+                [[InlineKeyboardButton("🔗 Log in", callback_data="connect_account")]]
             ),
         )
 
     user_message = message
 
-    text = "📊 Limite do lote: 1000 mensagens\n\n"
-    text += "Envie o link da mensagem do chat de onde deseja salvar em lote.\n\n"
-    text += "Exemplo: \n1. https://t.me/c/2114152609/1\n\n"
-    text += "\n\n/cancel para cancelar ❌"
+    text = "📊 Batch limit: 1000 messages\n\n"
+    text += "Send the message link from the chat you want to batch-save from.\n\n"
+    text += "Example: \n1. https://t.me/c/2114152609/1\n\n"
+    text += "\n\n/cancel to cancel ❌"
 
     ask = await message.chat.ask(text)
 
@@ -49,12 +49,12 @@ async def batch(bot: Client, message: Message):
 
     first_message = ask
 
-    text = "Envie uma das opções abaixo:\n\n"
-    text += "1. Copie o link da mensagem e me envie 📎\n"
-    text += "Exemplo: https://t.me/c/2114152609/10\n\n"
-    text += "2. Envie a quantidade de mensagens que deseja salvar 🔢\n"
-    text += "Exemplo: 10"
-    text += "\n\n/cancel para cancelar ❌"
+    text = "Send one of the options below:\n\n"
+    text += "1. Copy the message link and send it to me 📎\n"
+    text += "Example: https://t.me/c/2114152609/10\n\n"
+    text += "2. Send how many messages you want to save 🔢\n"
+    text += "Example: 10"
+    text += "\n\n/cancel to cancel ❌"
 
     ask = await message.chat.ask(text)
 
@@ -66,7 +66,7 @@ async def batch(bot: Client, message: Message):
     first_parts = get_link_parts(first_message.text)
 
     if not first_parts:
-        text = f"❌ Link inválido - {first_message.text}"
+        text = f"❌ Invalid link - {first_message.text}"
         await message.reply_text(text)
         return
 
@@ -80,7 +80,7 @@ async def batch(bot: Client, message: Message):
         last_parts = get_link_parts(last_message.text)
 
     if not last_parts:
-        text = f"❌ Link inválido - {last_message.text}"
+        text = f"❌ Invalid link - {last_message.text}"
         await message.reply_text(text)
         return
 
@@ -88,22 +88,22 @@ async def batch(bot: Client, message: Message):
     last_chat_id, last_message_id, last_topic_id = last_parts
 
     if last_message_id < first_message_id:
-        text = "⚠️ A última mensagem deve ser mais recente que a primeira."
+        text = "⚠️ The last message must be more recent than the first."
         await message.reply_text(text)
         return
 
     if first_chat_id != last_chat_id:
-        text = "⚠️ As duas mensagens devem ser do mesmo chat."
+        text = "⚠️ Both messages must be from the same chat."
         await message.reply_text(text)
         return
 
     if (first_topic_id and not last_topic_id) or (not first_topic_id and last_topic_id):
-        text = "⚠️ As duas mensagens devem ser do mesmo tópico."
+        text = "⚠️ Both messages must be from the same topic."
         await message.reply_text(text)
         return
 
     if (first_topic_id and last_topic_id) and first_message_id != last_message_id:
-        text = "⚠️ As duas mensagens devem ser do mesmo tópico."
+        text = "⚠️ Both messages must be from the same topic."
         await message.reply_text(text)
         return
 
@@ -112,7 +112,7 @@ async def batch(bot: Client, message: Message):
     if not config:
         return
         
-    out = await message.reply_text("🔄 Buscando mensagens...")
+    out = await message.reply_text("🔄 Fetching messages...")
 
     if not (first_topic_id and last_topic_id):
         messages = []
@@ -123,7 +123,7 @@ async def batch(bot: Client, message: Message):
                     await app.get_messages(first_chat_id, total_messages[i : i + 200])
                 )
             except Exception as e:
-                text = f"⚠️ Ocorreu um erro ao buscar as mensagens: {e}"
+                text = f"⚠️ An error occurred while fetching messages: {e}"
                 return await out.edit(text)
     else:
         messages = []
@@ -166,7 +166,7 @@ async def batch(bot: Client, message: Message):
         valid_messages.append(link)
 
     if not valid_messages:
-        text = "🔍 Nenhuma mensagem válida encontrada."
+        text = "🔍 No valid messages found."
         return await out.edit(text)
 
     await out.delete()

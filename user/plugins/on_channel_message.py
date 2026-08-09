@@ -8,10 +8,6 @@ from contextlib import suppress
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
-from bot.utils.email_resend import (
-    build_forward_email_body,
-    notify_forward_emails,
-)
 from bot.utils.forward_sources import is_active_source_chat
 from database import db
 
@@ -94,16 +90,3 @@ async def on_channel_message(client: Client, message: Message):
                 dest_id,
                 user_id,
             )
-            continue
-
-        emails = fwd.get("emails") or []
-        if not emails:
-            continue
-
-        subject = f"Encaminhamento: {fwd['source_title']} → {fwd['dest_title']}"
-        body = build_forward_email_body(
-            message,
-            source_title=fwd["source_title"],
-            dest_title=fwd["dest_title"],
-        )
-        await notify_forward_emails(emails, subject=subject, body=body)

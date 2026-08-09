@@ -48,7 +48,7 @@ async def forward_message(
 
     if not log:
         return await bot.send_message(
-            user_id, "Falha ao encaminhar a mensagem. Tente de novo."
+            user_id, "Failed to forward the message. Try again."
         )
 
     if file_path:
@@ -69,7 +69,7 @@ async def download_media(bot, user_id, message: types.Message):
         return None
 
     out = await bot.floodwait_handler(
-        bot.send_message, user_id, f"Baixando ({message.index})"
+        bot.send_message, user_id, f"Downloading ({message.index})"
     )
     start = time.time()
 
@@ -77,7 +77,7 @@ async def download_media(bot, user_id, message: types.Message):
 
     if not filename:
         await out.delete()
-        await bot.send_message(user_id, "Nenhum nome de arquivo encontrado.")
+        await bot.send_message(user_id, "No file name found.")
         return None
 
     file_path = await bot.floodwait_handler(
@@ -89,7 +89,7 @@ async def download_media(bot, user_id, message: types.Message):
             message,
             out.edit,
             download_id,
-            f"Baixando ({message.index})",
+            f"Downloading ({message.index})",
         ),
     )
     await out.delete()
@@ -106,7 +106,7 @@ async def upload_media(
     message: types.Message,
     config: dict,
 ):
-    out = await bot.floodwait_handler(bot.send_message, user_id, "Iniciando envio...")
+    out = await bot.floodwait_handler(bot.send_message, user_id, "Starting upload...")
     target_channel = config["dest"]
 
     thumbnail = await get_thumbnail(file_path)
@@ -116,7 +116,7 @@ async def upload_media(
     if not function:
         await out.delete()
         return await bot.send_message(
-            user_id, "Modo de envio inválido. Selecione um modo válido."
+            user_id, "Invalid send mode. Select a valid mode."
         )
 
     if function == app.send_video:
@@ -142,7 +142,7 @@ async def upload_media(
         message,
         out.edit,
         message.download_id,
-        f"Enviando ({message.index})",
+        f"Uploading ({message.index})",
     )
 
     caption = message.text or message.caption
@@ -151,7 +151,7 @@ async def upload_media(
     else:
         kwargs["caption"] = None
 
-    await bot.floodwait_handler(out.edit, "Enviando...")
+    await bot.floodwait_handler(out.edit, "Uploading...")
 
     log = await bot.floodwait_handler(function, **kwargs)
     await out.delete()
@@ -175,14 +175,14 @@ async def resume_transfers(bot: Client):
     for transfer in transfers:
         user_id = transfer["user_id"]
         text = (
-            f"**O bot reiniciou. Você pode retomar as transferências de "
-            f"{transfer['link_index']} até {len(transfer['links'])}.**"
+            f"**The bot restarted. You can resume transfers from "
+            f"{transfer['link_index']} to {len(transfer['links'])}.**"
         )
         markup = types.InlineKeyboardMarkup(
             [
                 [
                     types.InlineKeyboardButton(
-                        "Retomar transferências",
+                        "Resume transfers",
                         callback_data=f"resume_transfers {transfer['_id']}",
                     )
                 ]

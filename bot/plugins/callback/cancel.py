@@ -24,7 +24,7 @@ async def cancel_transfer(bot: Client, query: CallbackQuery | Message):
         kwargs = {"show_alert": True}
 
     if not download_id:
-        return await func("❌ Nenhuma transferência encontrada.", **kwargs)
+        return await func("❌ No transfer found.", **kwargs)
 
     for d_id in download_id:
         transfer = settings.TRANSFERS.get(d_id)
@@ -36,4 +36,4 @@ async def cancel_transfer(bot: Client, query: CallbackQuery | Message):
 
         transfer["status"] = TransferStatus.CANCELLED.value
         await update_transfer(d_id, **transfer)
-    return await func("✅ A transferência será cancelada.", **kwargs)
+    return await func("✅ The transfer will be cancelled.", **kwargs)

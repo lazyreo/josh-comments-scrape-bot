@@ -23,12 +23,12 @@ from database import db
 
 class Data:
     generate_single_button = [
-        InlineKeyboardButton("🔒 Entrar com segurança", callback_data="connect_account")
+        InlineKeyboardButton("🔒 Log in securely", callback_data="connect_account")
     ]
 
     home_buttons = [
-        [InlineKeyboardButton("➡️ Continuar", callback_data="add_forward")],
-        [InlineKeyboardButton(text="🏠 Início", callback_data="start")],
+        [InlineKeyboardButton("➡️ Continue", callback_data="add_forward")],
+        [InlineKeyboardButton(text="🏠 Home", callback_data="start")],
     ]
 
     generate_button = [generate_single_button]
@@ -40,16 +40,16 @@ async def generate_session(bot: Client, msg: Message):
     api_id = bot.api_id
     api_hash = bot.api_hash
 
-    t = "📲 Agora envie seu número de telefone com o código do país.\nExemplo: `+5511999999999`"
-    t += "\n\nObs.: **Use o mesmo número da conta que você está usando agora.**"
-    t += "\n\n/cancel para cancelar ❌"
+    t = "📲 Now send your phone number with the country code.\nExample: `+15551234567`"
+    t += "\n\nNote: **Use the same number as the account you're using right now.**"
+    t += "\n\n/cancel to cancel ❌"
 
     phone_number_msg: Message = await bot.ask(
         user_id,
         t,
         filters=filters.text | filters.contact,
         reply_markup=ReplyKeyboardMarkup(
-            [[KeyboardButton("Enviar número", request_contact=True)]],
+            [[KeyboardButton("Send number", request_contact=True)]],
             resize_keyboard=True,
             one_time_keyboard=True,
         ),
@@ -63,7 +63,7 @@ async def generate_session(bot: Client, msg: Message):
     else:
         phone_number = phone_number_msg.text
 
-    await msg.reply("🔐 Entrando como usuário...", reply_markup=ReplyKeyboardRemove())
+    await msg.reply("🔐 Signing in as user...", reply_markup=ReplyKeyboardRemove())
 
     client = Client(
         name=f"user_{user_id}", api_id=api_id, api_hash=api_hash, in_memory=True
@@ -75,7 +75,7 @@ async def generate_session(bot: Client, msg: Message):
         code = await client.send_code(phone_number)
     except PhoneNumberInvalid:
         await msg.reply(
-            "🚫 Número de telefone inválido. Comece o login novamente.",
+            "🚫 Invalid phone number. Start login again.",
             reply_markup=InlineKeyboardMarkup(Data.generate_button),
         )
         return
@@ -83,7 +83,7 @@ async def generate_session(bot: Client, msg: Message):
         phone_code_msg = None
         phone_code_msg = await bot.ask(
             user_id,
-            "📩 Verifique o OTP no app oficial do Telegram. Quando receber, envie no formato: se o OTP for `12345`, **envie** `1 2 3 4 5`.",
+            "📩 Check the OTP in the official Telegram app. When you get it, send it like this: if the OTP is `12345`, **send** `1 2 3 4 5`.",
             filters=filters.text,
             timeout=600,
         )
@@ -91,14 +91,14 @@ async def generate_session(bot: Client, msg: Message):
             return
     except TimeoutError:
         await msg.reply(
-            "⏰ Tempo esgotado (10 minutos). Comece o login novamente.",
+            "⏰ Timed out (10 minutes). Start login again.",
             reply_markup=InlineKeyboardMarkup(Data.generate_button),
         )
         return
 
     if " " not in phone_code_msg.text:
         await phone_code_msg.reply(
-            "🚫 Formato de OTP inválido. Se for `12345`, **envie** `1 2 3 4 5`.",
+            "🚫 Invalid OTP format. If it is `12345`, **send** `1 2 3 4 5`.",
             quote=True,
             reply_markup=InlineKeyboardMarkup(Data.generate_button),
         )
@@ -109,13 +109,13 @@ async def generate_session(bot: Client, msg: Message):
         await client.sign_in(phone_number, code.phone_code_hash, phone_code)
     except PhoneCodeInvalid:
         await msg.reply(
-            "❌ OTP inválido. Comece o login novamente.",
+            "❌ Invalid OTP. Start login again.",
             reply_markup=InlineKeyboardMarkup(Data.generate_button),
         )
         return
     except PhoneCodeExpired:
         await msg.reply(
-            "⌛ OTP expirado. Comece o login novamente.",
+            "⌛ OTP expired. Start login again.",
             reply_markup=InlineKeyboardMarkup(Data.generate_button),
         )
         return
@@ -123,13 +123,13 @@ async def generate_session(bot: Client, msg: Message):
         try:
             two_step_msg = await bot.ask(
                 user_id,
-                "🔐 Sua conta tem verificação em duas etapas. Envie a senha.",
+                "🔐 Your account has two-step verification. Send the password.",
                 filters=filters.text,
                 timeout=300,
             )
         except TimeoutError:
             await msg.reply(
-                "⏰ Tempo esgotado (5 minutos). Comece o login novamente.",
+                "⏰ Timed out (5 minutes). Start login again.",
                 reply_markup=InlineKeyboardMarkup(Data.generate_button),
             )
             return
@@ -138,7 +138,7 @@ async def generate_session(bot: Client, msg: Message):
             await client.check_password(password=password)
         except PasswordHashInvalid:
             await two_step_msg.reply(
-                "🚫 Senha inválida. Comece o login novamente.",
+                "🚫 Invalid password. Start login again.",
                 quote=True,
                 reply_markup=InlineKeyboardMarkup(Data.generate_button),
             )
@@ -149,7 +149,7 @@ async def generate_session(bot: Client, msg: Message):
 
     if me.id != user_id:
         await msg.reply(
-            "🚫 Você não é o dono desta conta. Faça login com o seu próprio número.",
+            "🚫 You are not the owner of this account. Log in with your own number.",
             reply_markup=InlineKeyboardMarkup(Data.generate_button),
         )
         return
@@ -165,7 +165,7 @@ async def generate_session(bot: Client, msg: Message):
 
     await bot.send_message(
         msg.chat.id,
-        "🎉 Login realizado com sucesso! Toque em **Continuar** para adicionar um encaminhamento Origem → Destino.",
+        "🎉 Login successful! Tap **Continue** to add a Source → Destination forward.",
         reply_markup=InlineKeyboardMarkup(Data.home_buttons),
     )
 
@@ -178,19 +178,19 @@ async def cancelled(msg):
         return
     if "/cancel" in msg.text:
         await msg.reply(
-            "🚫 Processo cancelado!",
+            "🚫 Process cancelled!",
             quote=True,
             reply_markup=ReplyKeyboardRemove(),
         )
         await msg.reply(
-            "Você pode entrar novamente tocando no botão abaixo.",
+            "You can log in again by tapping the button below.",
             quote=True,
             reply_markup=InlineKeyboardMarkup(Data.generate_button),
         )
         return True
     elif msg.text.startswith("/"):
         await msg.reply(
-            "🚫 Processo cancelado!",
+            "🚫 Process cancelled!",
             quote=True,
             reply_markup=ReplyKeyboardRemove(),
         )

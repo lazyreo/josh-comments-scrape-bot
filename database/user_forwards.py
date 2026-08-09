@@ -12,7 +12,6 @@ class UserForwardsDatabase(Core):
         source_title: str,
         dest_id: int,
         dest_title: str,
-        emails: list | None = None,
     ):
         return await super().create(
             {
@@ -21,7 +20,6 @@ class UserForwardsDatabase(Core):
                 "source_title": source_title,
                 "dest_id": dest_id,
                 "dest_title": dest_title,
-                "emails": emails or [],
                 "status": True,
             }
         )

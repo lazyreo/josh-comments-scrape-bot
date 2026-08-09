@@ -12,13 +12,13 @@ async def resume_transfers(bot: Client, query: CallbackQuery):
     user_id = query.from_user.id
     transfer = await db.transfers.read(download_id)
     if not transfer:
-        return await query.answer("❌ Nenhuma transferência encontrada.", show_alert=True)
+        return await query.answer("❌ No transfer found.", show_alert=True)
 
     link_index = int(transfer["link_index"])
     links = transfer["links"][link_index:]
     await remove_transfer_from_queue(transfer["_id"])
     if not links:
-        return await query.answer("Transferência concluída.", show_alert=True)
+        return await query.answer("Transfer completed.", show_alert=True)
 
     text = "\n".join(links)
 

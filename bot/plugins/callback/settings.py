@@ -18,14 +18,14 @@ async def settings(bot: Client, query: CallbackQuery):
     session_username = (
         f'@{user["session"]["username"]}'
         if user["session"]["username"]
-        else "Sem usuário"
+        else "No username"
     )
 
     markup = InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("👤 Minha conta", callback_data="connected_account")],
-            [InlineKeyboardButton("🔀 Encaminhamentos", callback_data="forwards")],
-            [InlineKeyboardButton("🔙 Voltar", callback_data="start")],
+            [InlineKeyboardButton("👤 My account", callback_data="connected_account")],
+            [InlineKeyboardButton("🔀 Forwards", callback_data="forwards")],
+            [InlineKeyboardButton("🔙 Back", callback_data="start")],
         ]
     )
     text = get_settings_table(query, session_username, forwards_count)
@@ -35,23 +35,23 @@ async def settings(bot: Client, query: CallbackQuery):
 
 def get_settings_table(query, session_username, forwards_count):
     table_data = [
-        ["Usuário", query.from_user.first_name],
-        ["Sessão", session_username],
-        ["ID do usuário", f"{query.from_user.id}"],
-        ["Encaminhamentos", forwards_count],
+        ["User", query.from_user.first_name],
+        ["Session", session_username],
+        ["User ID", f"{query.from_user.id}"],
+        ["Forwards", forwards_count],
     ]
 
-    header_text = "Configurações\n\n"
+    header_text = "Settings\n\n"
     table = tabulate(
         table_data,
         tablefmt="grid",
-        headers=["Opção", "Status"],
+        headers=["Option", "Status"],
         colalign=("left", "right"),
     )
     table = "`" + table + "`"
 
     extra_info = (
-        "\n\nEntre com sua conta e depois adicione um encaminhamento Origem → Destino.\n"
+        "\n\nLog in with your account, then add a Source → Destination forward.\n"
     )
 
     return header_text + table + extra_info

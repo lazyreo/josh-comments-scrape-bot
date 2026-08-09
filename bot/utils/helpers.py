@@ -21,12 +21,12 @@ async def get_thumbnail(file_path):
 
 async def set_commands(app: Client):
     commands = [
-        types.BotCommand("start", "🚀 Começar a usar o bot"),
-        types.BotCommand("help", "💡 Precisa de ajuda? Veja aqui"),
-        types.BotCommand("batch", "📦 Salvar um canal inteiro"),
-        types.BotCommand("account", "👤 Gerenciar sua conta do Telegram"),
-        types.BotCommand("forwards", "🔀 Gerenciar encaminhamentos origem → destino"),
-        types.BotCommand("cancel", "❌ Cancelar uma transferência em andamento"),
+        types.BotCommand("start", "🚀 Start using the bot"),
+        types.BotCommand("help", "💡 Need help? See here"),
+        types.BotCommand("batch", "📦 Save an entire channel"),
+        types.BotCommand("account", "👤 Manage your Telegram account"),
+        types.BotCommand("forwards", "🔀 Manage source → destination forwards"),
+        types.BotCommand("cancel", "❌ Cancel an in-progress transfer"),
     ]
     await app.set_bot_commands(commands)
 
@@ -91,7 +91,7 @@ async def progress_for_pyrogram(
     file_message: types.Message,
     edit_func,
     download_id,
-    mode="Enviando",
+    mode="Uploading",
 ):
     if is_transfer_cancelled(download_id):
         raise StopTransmission
@@ -170,7 +170,7 @@ async def get_user_client(user_id) -> Client | None:
 
 async def is_input_cancelled(message: types.Message):
     if message.text and message.text.lower() == "/cancel":
-        return await message.reply_text("❌ Operação cancelada.", quote=True)
+        return await message.reply_text("❌ Operation cancelled.", quote=True)
     return False
 
 
@@ -228,7 +228,7 @@ def check_admin(func):
         admins = await get_admins()
 
         if chat_id not in admins:
-            return await message.reply_text("Você não tem permissão para usar este comando.")
+            return await message.reply_text("You do not have permission to use this command.")
         return await func(client, message)
 
     return wrapper
