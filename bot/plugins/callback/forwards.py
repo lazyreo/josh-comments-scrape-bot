@@ -6,11 +6,51 @@ from pyrogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
+from pyromod.exceptions import ListenerStopped
+from pyromod.types import ListenerTypes
 
 from bot.utils.chat_resolve import chat_title, parse_chat_ref, resolve_chat
 from bot.utils.forward_sources import refresh_active_sources
 from bot.utils.helpers import get_user_client
 from database import db
+
+_FWD_ASK_CANCEL = "fwd_ask_cancel"
+_CANCEL_MARKUP = InlineKeyboardMarkup(
+    [[InlineKeyboardButton("❌ Cancel", callback_data=_FWD_ASK_CANCEL)]]
+)
+_REPL_YES_SKIP_MARKUP = InlineKeyboardMarkup(
+    [
+        [
+            InlineKeyboardButton("✅ Yes", callback_data="fwd_repl_yes"),
+            InlineKeyboardButton("⏭️ Skip", callback_data="fwd_repl_skip"),
+        ],
+        [InlineKeyboardButton("❌ Cancel", callback_data="fwd_repl_cancel")],
+    ]
+)
+_REPL_ANOTHER_DONE_MARKUP = InlineKeyboardMarkup(
+    [
+        [
+            InlineKeyboardButton("➕ Another", callback_data="fwd_repl_another"),
+            InlineKeyboardButton("✅ Done", callback_data="fwd_repl_done"),
+        ],
+        [InlineKeyboardButton("❌ Cancel", callback_data="fwd_repl_cancel")],
+    ]
+)
+
+
+@Client.on_callback_query(filters.regex(rf"^{_FWD_ASK_CANCEL}$"))
+async def cancel_forward_ask(bot: Client, query: CallbackQuery):
+    await bot.stop_listening(
+        chat_id=query.message.chat.id,
+        user_id=query.from_user.id,
+        listener_type=ListenerTypes.MESSAGE,
+    )
+    await bot.stop_listening(
+        chat_id=query.message.chat.id,
+        user_id=query.from_user.id,
+        listener_type=ListenerTypes.CALLBACK_QUERY,
+    )
+    await query.answer()
 
 
 @Client.on_callback_query(filters.regex(r"^forwards$"))
@@ -77,22 +117,26 @@ async def add_forward(bot: Client, message: CallbackQuery):
     back = InlineKeyboardMarkup(
         [[InlineKeyboardButton("🔙 Back", callback_data="forwards")]]
     )
+    chat = message.message.chat
+
+    async def cancelled():
+        return await chat.send_message("❌ Cancelled", reply_markup=back)
 
     try:
-        ask = await message.message.chat.ask(
+        ask = await chat.ask(
             "📥 **Source**\n\n"
             "Send the chat you want to copy from:\n"
             "• @username\n"
             "• chat / user id\n"
             "• or forward any message from that chat\n\n"
-            "The connected account must be able to see that chat.\n\n"
-            "/cancel to cancel"
+            "The connected account must be able to see that chat.",
+            user_id=user_id,
+            reply_markup=_CANCEL_MARKUP,
         )
+    except ListenerStopped:
+        return await cancelled()
     except Exception as e:
         return await message.message.reply_text(f"🚫 Error: {e}", reply_markup=back)
-
-    if ask.text and ask.text.strip().lower() == "/cancel":
-        return await ask.reply("❌ Cancelled", reply_markup=back)
 
     source_ref = parse_chat_ref(ask)
     if source_ref is None:
@@ -107,20 +151,20 @@ async def add_forward(bot: Client, message: CallbackQuery):
         )
 
     try:
-        ask = await message.message.chat.ask(
+        ask = await chat.ask(
             "📤 **Destination**\n\n"
             "Send the chat you want to copy to:\n"
             "• @username\n"
             "• chat / user id\n"
             "• or forward any message from that chat\n\n"
-            "The connected account must be able to post there.\n\n"
-            "/cancel to cancel"
+            "The connected account must be able to post there.",
+            user_id=user_id,
+            reply_markup=_CANCEL_MARKUP,
         )
+    except ListenerStopped:
+        return await cancelled()
     except Exception as e:
         return await message.message.reply_text(f"🚫 Error: {e}", reply_markup=back)
-
-    if ask.text and ask.text.strip().lower() == "/cancel":
-        return await ask.reply("❌ Cancelled", reply_markup=back)
 
     dest_ref = parse_chat_ref(ask)
     if dest_ref is None:
@@ -137,12 +181,94 @@ async def add_forward(bot: Client, message: CallbackQuery):
     source_name = chat_title(source)
     dest_name = chat_title(dest)
 
+    text_replacements: list[dict] = []
+    try:
+        choice = await chat.ask(
+            "🔤 **Text replacements**\n\n"
+            "Replace text/captions before forwarding?",
+            filters=filters.regex(r"^fwd_repl_(yes|skip|cancel)$"),
+            listener_type=ListenerTypes.CALLBACK_QUERY,
+            user_id=user_id,
+            reply_markup=_REPL_YES_SKIP_MARKUP,
+        )
+    except ListenerStopped:
+        return await cancelled()
+    except Exception as e:
+        return await message.message.reply_text(f"🚫 Error: {e}", reply_markup=back)
+
+    await choice.answer()
+    if choice.data == "fwd_repl_cancel":
+        return await cancelled()
+
+    if choice.data == "fwd_repl_yes":
+        while True:
+            try:
+                ask = await chat.ask(
+                    "🔤 **Source text**\n\n"
+                    "Send the text to find (literal match).",
+                    user_id=user_id,
+                    reply_markup=_CANCEL_MARKUP,
+                )
+            except ListenerStopped:
+                return await cancelled()
+            except Exception as e:
+                return await message.message.reply_text(
+                    f"🚫 Error: {e}", reply_markup=back
+                )
+
+            source_text = ask.text or ""
+            if not source_text.strip():
+                await ask.reply("⚠️ Source text cannot be empty. Try again.")
+                continue
+
+            try:
+                ask = await chat.ask(
+                    "🔤 **Replacement text**\n\n"
+                    "Send the text to replace it with "
+                    "(send a space to delete the match).",
+                    user_id=user_id,
+                    reply_markup=_CANCEL_MARKUP,
+                )
+            except ListenerStopped:
+                return await cancelled()
+            except Exception as e:
+                return await message.message.reply_text(
+                    f"🚫 Error: {e}", reply_markup=back
+                )
+
+            target_text = ask.text if ask.text is not None else ""
+            text_replacements.append(
+                {"source": source_text, "target": target_text}
+            )
+
+            try:
+                choice = await chat.ask(
+                    f"✅ Rule added (`{len(text_replacements)}` so far).",
+                    filters=filters.regex(r"^fwd_repl_(another|done|cancel)$"),
+                    listener_type=ListenerTypes.CALLBACK_QUERY,
+                    user_id=user_id,
+                    reply_markup=_REPL_ANOTHER_DONE_MARKUP,
+                )
+            except ListenerStopped:
+                return await cancelled()
+            except Exception as e:
+                return await message.message.reply_text(
+                    f"🚫 Error: {e}", reply_markup=back
+                )
+
+            await choice.answer()
+            if choice.data == "fwd_repl_cancel":
+                return await cancelled()
+            if choice.data != "fwd_repl_another":
+                break
+
     await db.user_forwards.create(
         user_id=user_id,
         source_id=source.id,
         source_title=source_name,
         dest_id=dest.id,
         dest_title=dest_name,
+        text_replacements=text_replacements,
     )
     await refresh_active_sources()
 
@@ -151,6 +277,8 @@ async def add_forward(bot: Client, message: CallbackQuery):
         f"**From:** {source_name} (`{source.id}`)\n"
         f"**To:** {dest_name} (`{dest.id}`)\n"
     )
+    if text_replacements:
+        text += f"**Replacements:** {len(text_replacements)}\n"
 
     return await message.message.reply_text(text, reply_markup=back)
 

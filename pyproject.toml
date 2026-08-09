@@ -1,0 +1,16 @@
+[project]
+name = "save-bot-sahil"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "apscheduler>=3.11.3",
+    "ffmpeg>=1.4",
+    "kurigram>=2.2.24",
+    "motor>=3.7.1",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.15.0",
+    "reloadium>=1.5.1",
+    "tgcrypto>=1.2.5",
+]
