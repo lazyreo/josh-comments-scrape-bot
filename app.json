@@ -1,0 +1,105 @@
+{
+    "name": "Bot",
+    "description": "A Telegram bot",
+    "keywords": [
+        "telegram",
+        "bot"
+    ],
+    "website": "",
+    "repository": "",
+    "env": {
+        "API_ID": {
+            "description": "Get this value from https://my.telegram.org",
+            "value": "0",
+            "required": true
+        },
+        "API_HASH": {
+            "description": "Get this value from https://my.telegram.org",
+            "value": "0",
+            "required": true
+        },
+        "BOT_TOKEN": {
+            "description": "Your bot token from @botfather",
+            "value": "0",
+            "required": true
+        },
+        "DATABASE_NAME": {
+            "description": "Name of the database",
+            "value": "tg_bot",
+            "required": false
+        },
+        "DATABASE_URL": {
+            "description": "Your database URI from mongodb.com",
+            "value": "0",
+            "required": true
+        },
+        "OWNER_ID": {
+            "description": "ID of the Bot Owner",
+            "value": "0",
+            "required": true
+        },
+        "USER_INFO_LOG": {
+            "description": "Channel ID for logging user info",
+            "value": "0",
+            "required": false
+        },
+        "SUBSCRIPTION_LOG": {
+            "description": "Channel ID for logging subscription info",
+            "value": "0",
+            "required": false
+        },
+        "FILES_LOG": {
+            "description": "Channel ID for logging file info",
+            "value": "0",
+            "required": false
+        },
+        "SHORTENER_DOMAIN": {
+            "description": "Domain for URL shortener",
+            "value": "0",
+            "required": false
+        },
+        "SHORTENER_API_KEY": {
+            "description": "API key for URL shortener",
+            "value": "0",
+            "required": false
+        },
+        "WEB_SERVER": {
+            "description": "Enable web server (True/False)",
+            "value": "False",
+            "required": false
+        },
+        "UPI_ID": {
+            "description": "UPI ID for payments",
+            "value": "0",
+            "required": false
+        },
+        "PAYPAL_USERNAME": {
+            "description": "PayPal username for payments",
+            "value": "0",
+            "required": false
+        },
+        "MY_FATHER_ID": {
+            "description": "ID of your father",
+            "value": "0",
+            "required": false
+        }
+    },
+    "addons": [],
+    "buildpacks": [
+        {
+            "url": "https://github.com/amivin/aria2-heroku.git"
+        },
+        {
+            "url": "heroku/python"
+        },
+        {
+            "url": "https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git"
+        }
+    ],
+    "formation": {
+        "worker": {
+            "quantity": 1,
+            "size": "standard-2x"
+        }
+    }
+}

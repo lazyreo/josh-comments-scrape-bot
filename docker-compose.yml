@@ -1,0 +1,9 @@
+services:
+  my_app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/app
+    env_file: ".env"
+    command: python main.py
