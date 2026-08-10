@@ -238,14 +238,16 @@ async def add_forward(bot: Client, message: CallbackQuery):
             target_text = ask.text if ask.text is not None else ""
             if ask.text == "/skip":
                 target_text = ""
-            text_replacements.append(
-                {"source": source_text, "target": target_text}
+            replaced = _upsert_replacement(
+                text_replacements, source_text, target_text
             )
 
             try:
                 text_replacements_display = _format_replacements(text_replacements)
+                verb = "updated" if replaced else "added"
                 choice = await chat.ask(
-                    f"✅ Rule added (`{len(text_replacements)}` so far):\n\n{text_replacements_display}",
+                    f"✅ Rule {verb} (`{len(text_replacements)}` so far):\n\n"
+                    f"{text_replacements_display}",
                     filters=filters.regex(r"^fwd_repl_(another|done|cancel)$"),
                     listener_type=ListenerTypes.CALLBACK_QUERY,
                     user_id=user_id,
@@ -283,6 +285,16 @@ async def add_forward(bot: Client, message: CallbackQuery):
         text += f"**Replacements:** {len(text_replacements)}\n"
 
     return await message.message.reply_text(text, reply_markup=back)
+
+
+def _upsert_replacement(rules: list[dict], source: str, target: str) -> bool:
+    """Set target for an existing source, or append. Returns True if replaced."""
+    for rule in rules:
+        if (rule.get("source") or "") == source:
+            rule["target"] = target
+            return True
+    rules.append({"source": source, "target": target})
+    return False
 
 
 def _format_replacements(rules: list[dict]) -> str:
@@ -439,11 +451,14 @@ async def add_repl(bot: Client, message: CallbackQuery):
         if ask.text == "/skip":
             target_text = ""
 
-        added.append({"source": source_text, "target": target_text})
+        replaced = _upsert_replacement(added, source_text, target_text)
+        if any((r.get("source") or "") == source_text for r in existing):
+            replaced = True
 
         try:
+            verb = "updated" if replaced else "added"
             choice = await chat.ask(
-                f"✅ Rule added (`{len(added)}` so far):\n\n"
+                f"✅ Rule {verb} (`{len(added)}` so far):\n\n"
                 f"{_format_replacements(added)}",
                 filters=filters.regex(r"^fwd_repl_(another|done|cancel)$"),
                 listener_type=ListenerTypes.CALLBACK_QUERY,
@@ -461,11 +476,12 @@ async def add_repl(bot: Client, message: CallbackQuery):
         if choice.data != "fwd_repl_another":
             break
 
-    await db.user_forwards.update(
-        _id, {"text_replacements": existing + added}
-    )
-    message.data = f"manage_replacements {_id}"
-    await manage_replacements(bot, message)
+    rules = list(existing)
+    for rule in added:
+        _upsert_replacement(rules, rule["source"], rule["target"])
+    await db.user_forwards.update(_id, {"text_replacements": rules})
+    choice.data = f"manage_replacements {_id}"
+    await manage_replacements(bot, choice)
 
 
 @Client.on_callback_query(filters.regex(r"^edit_repl "))
@@ -525,6 +541,11 @@ async def edit_repl(bot: Client, message: CallbackQuery):
 
     target_text = ask.text if ask.text is not None else ""
     rules[index] = {"source": source_text, "target": target_text}
+    rules = [
+        r
+        for i, r in enumerate(rules)
+        if i == index or (r.get("source") or "") != source_text
+    ]
     await db.user_forwards.update(_id, {"text_replacements": rules})
 
     message.data = f"manage_replacements {_id}"
