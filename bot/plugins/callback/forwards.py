@@ -434,7 +434,7 @@ async def add_repl(bot: Client, message: CallbackQuery):
     await db.user_forwards.update(_id, {"text_replacements": rules})
 
     message.data = f"manage_replacements {_id}"
-    await chat.send_message("✅ Replacement added.")
+    await bot.send_message(message.message.chat.id, "✅ Replacement added.")
     await manage_replacements(bot, message)
 
 
