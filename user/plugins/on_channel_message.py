@@ -67,12 +67,12 @@ async def on_channel_message(client: Client, message: Message):
 
     me = client.me or await client.get_me()
     # Skip messages sent by the logged-in account itself
-    # if message.outgoing:
-    #     return
-    # if message.from_user and message.from_user.id == me.id:
-    #     return
-    # if message.sender_chat and message.sender_chat.id == me.id:
-    #     return
+    if message.outgoing:
+        return
+    if message.from_user and message.from_user.id == me.id:
+        return
+    if message.sender_chat and message.sender_chat.id == me.id:
+        return
 
     user_id = await _session_user_id(client)
     if not user_id:
