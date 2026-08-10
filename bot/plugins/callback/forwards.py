@@ -120,7 +120,7 @@ async def add_forward(bot: Client, message: CallbackQuery):
     chat = message.message.chat
 
     async def cancelled():
-        return await chat.send_message("❌ Cancelled", reply_markup=back)
+        return await bot.send_message(message.message.chat.id, "❌ Cancelled", reply_markup=back)
 
     try:
         ask = await chat.ask(
@@ -397,7 +397,7 @@ async def add_repl(bot: Client, message: CallbackQuery):
     )
 
     async def cancelled():
-        return await chat.send_message("❌ Cancelled", reply_markup=back)
+        return await bot.send_message(message.message.chat.id, "❌ Cancelled", reply_markup=back)
 
     try:
         ask = await chat.ask(
@@ -498,7 +498,7 @@ async def edit_repl(bot: Client, message: CallbackQuery):
     await db.user_forwards.update(_id, {"text_replacements": rules})
 
     message.data = f"manage_replacements {_id}"
-    await chat.send_message("✅ Replacement updated.")
+    await bot.send_message(message.message.chat.id, "✅ Replacement updated.")
     await manage_replacements(bot, message)
 
 
