@@ -459,7 +459,7 @@ async def edit_repl(bot: Client, message: CallbackQuery):
     )
 
     async def cancelled():
-        return await chat.send_message("❌ Cancelled", reply_markup=back)
+        return await bot.send_message(message.message.chat.id, "❌ Cancelled", reply_markup=back)
 
     current = rules[index]
     try:
