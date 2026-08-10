@@ -30,7 +30,8 @@ async def addadmin(client: Client, message: Message):
 
     try:
         user = await client.get_users(user_id)
-    except:
+    except Exception as e:
+        print(e)
         await message.reply_text("Invalid user ID")
         return
 

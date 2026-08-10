@@ -225,7 +225,7 @@ async def add_forward(bot: Client, message: CallbackQuery):
                 ask = await chat.ask(
                     "🔤 **Replacement text**\n\n"
                     "Send the text to replace it with "
-                    "(send a space to delete the match).",
+                    "(send `/skip` to delete the match).",
                     user_id=user_id,
                     reply_markup=_CANCEL_MARKUP,
                 )
@@ -235,15 +235,17 @@ async def add_forward(bot: Client, message: CallbackQuery):
                 return await message.message.reply_text(
                     f"🚫 Error: {e}", reply_markup=back
                 )
-
             target_text = ask.text if ask.text is not None else ""
+            if ask.text == "/skip":
+                target_text = ""
             text_replacements.append(
                 {"source": source_text, "target": target_text}
             )
 
             try:
+                text_replacements_display = _format_replacements(text_replacements)
                 choice = await chat.ask(
-                    f"✅ Rule added (`{len(text_replacements)}` so far).",
+                    f"✅ Rule added (`{len(text_replacements)}` so far):\n\n{text_replacements_display}",
                     filters=filters.regex(r"^fwd_repl_(another|done|cancel)$"),
                     listener_type=ListenerTypes.CALLBACK_QUERY,
                     user_id=user_id,
@@ -285,7 +287,7 @@ async def add_forward(bot: Client, message: CallbackQuery):
 
 def _format_replacements(rules: list[dict]) -> str:
     if not rules:
-        return "_No replacements set._\n"
+        return "__No replacements set.__\n"
     lines = []
     for i, rule in enumerate(rules, 1):
         source = rule.get("source") or ""
@@ -399,42 +401,70 @@ async def add_repl(bot: Client, message: CallbackQuery):
     async def cancelled():
         return await bot.send_message(message.message.chat.id, "❌ Cancelled", reply_markup=back)
 
-    try:
-        ask = await chat.ask(
-            "🔤 **Source text**\n\n"
-            "Send the text to find (literal match).",
-            user_id=user_id,
-            reply_markup=_CANCEL_MARKUP,
-        )
-    except ListenerStopped:
-        return await cancelled()
-    except Exception as e:
-        return await message.message.reply_text(f"🚫 Error: {e}", reply_markup=back)
+    existing = list(row.get("text_replacements") or [])
+    added: list[dict] = []
 
-    source_text = ask.text or ""
-    if not source_text.strip():
-        return await ask.reply("⚠️ Source text cannot be empty.", reply_markup=back)
+    while True:
+        try:    
+            ask = await chat.ask(
+                "🔤 **Source text**\n\n"
+                "Send the text to find (literal match).",
+                user_id=user_id,
+                reply_markup=_CANCEL_MARKUP,
+            )
+        except ListenerStopped:
+            return await cancelled()
+        except Exception as e:
+            return await message.message.reply_text(f"🚫 Error: {e}", reply_markup=back)
 
-    try:
-        ask = await chat.ask(
-            "🔤 **Replacement text**\n\n"
-            "Send the text to replace it with "
-            "(send a space to delete the match).",
-            user_id=user_id,
-            reply_markup=_CANCEL_MARKUP,
-        )
-    except ListenerStopped:
-        return await cancelled()
-    except Exception as e:
-        return await message.message.reply_text(f"🚫 Error: {e}", reply_markup=back)
+        source_text = ask.text or ""
+        if not source_text.strip():
+            await ask.reply("⚠️ Source text cannot be empty. Try again.")
+            continue
 
-    target_text = ask.text if ask.text is not None else ""
-    rules = list(row.get("text_replacements") or [])
-    rules.append({"source": source_text, "target": target_text})
-    await db.user_forwards.update(_id, {"text_replacements": rules})
+        try:
+            ask = await chat.ask(
+                "🔤 **Replacement text**\n\n"
+                "Send the text to replace it with "
+                "(send `/skip` to delete the match).",
+                user_id=user_id,
+                reply_markup=_CANCEL_MARKUP,
+            )
+        except ListenerStopped:
+            return await cancelled()
+        except Exception as e:
+            return await message.message.reply_text(f"🚫 Error: {e}", reply_markup=back)
 
+        target_text = ask.text if ask.text is not None else ""
+        if ask.text == "/skip":
+            target_text = ""
+
+        added.append({"source": source_text, "target": target_text})
+
+        try:
+            choice = await chat.ask(
+                f"✅ Rule added (`{len(added)}` so far):\n\n"
+                f"{_format_replacements(added)}",
+                filters=filters.regex(r"^fwd_repl_(another|done|cancel)$"),
+                listener_type=ListenerTypes.CALLBACK_QUERY,
+                user_id=user_id,
+                reply_markup=_REPL_ANOTHER_DONE_MARKUP,
+            )
+        except ListenerStopped:
+            return await cancelled()
+        except Exception as e:
+            return await message.message.reply_text(f"🚫 Error: {e}", reply_markup=back)
+
+        await choice.answer()
+        if choice.data == "fwd_repl_cancel":
+            return await cancelled()
+        if choice.data != "fwd_repl_another":
+            break
+
+    await db.user_forwards.update(
+        _id, {"text_replacements": existing + added}
+    )
     message.data = f"manage_replacements {_id}"
-    await bot.send_message(message.message.chat.id, "✅ Replacement added.")
     await manage_replacements(bot, message)
 
 
