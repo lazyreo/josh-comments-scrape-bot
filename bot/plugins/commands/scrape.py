@@ -6,9 +6,9 @@ import re
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 
-from pyrogram import Client, filters
+from pyrogram import Client, filters, raw
 from pyrogram.enums import UserStatus
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, User
+from pyrogram.types import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message, User
 from pyromod.exceptions import ListenerStopped
 from pyromod.types import ListenerTypes
 
@@ -19,23 +19,24 @@ from bot.utils import (
     get_user_client,
     is_input_cancelled,
 )
-from bot.utils.chat_resolve import parse_chat_input, resolve_chat
+from bot.utils.chat_resolve import forward_post_ref, parse_chat_input, resolve_chat
 from database import db
 
 logger = logging.getLogger(__name__)
 
-COMMENT_BATCH_SIZE = 500
+COMMENT_BATCH_SIZE = max(1, int(settings.SCRAPE_COMMENT_BATCH_SIZE))
+COMMENT_BATCH_SLEEP_SECONDS = max(0.0, float(settings.SCRAPE_COMMENT_BATCH_SLEEP_SECONDS))
 GET_USERS_LIMIT = 200
-POST_SLEEP_SECONDS = 2
+POST_SLEEP_SECONDS = max(0.0, float(settings.SCRAPE_POST_SLEEP_SECONDS))
 ACTIVE_WITHIN = timedelta(days=7)
 CSV_COLUMNS = [
     "telegram_id",
     "username",
     "first_name",
     "last_name",
-    "is_bot",
     "is_premium",
     "source_chat",
+    "source_post_link"
 ]
 _ACTIVE_STATUSES = {
     UserStatus.ONLINE,
@@ -68,21 +69,164 @@ _DONE_MARKUP = InlineKeyboardMarkup(
     ]
 )
 
+_POST_LINK_RE = re.compile(
+    r"(?:https?://)?(?:t\.me|telegram\.me|telegram\.dog)/[^\s,]+",
+    re.IGNORECASE,
+)
+
+
+def _normalize_post_link(link: str) -> str:
+    link = link.strip().rstrip(".,;)")
+    if link.startswith(("http://", "https://", "tg://")):
+        return link
+    return f"https://{link}"
+
+
+def _private_chat_slug(chat_id: int) -> str:
+    text = str(chat_id)
+    if text.startswith("-100"):
+        return text[4:]
+    if text.startswith("-"):
+        return text[1:]
+    return text
+
+
+def build_post_link(chat_or_id, post_id: int) -> str:
+    """Build a t.me post link for public or private channels/groups."""
+    if isinstance(chat_or_id, int):
+        return f"https://t.me/c/{_private_chat_slug(chat_or_id)}/{post_id}"
+
+    username = getattr(chat_or_id, "username", None)
+    if username:
+        return f"https://t.me/{username}/{post_id}"
+
+    return f"https://t.me/c/{_private_chat_slug(chat_or_id.id)}/{post_id}"
+
+
+def _discussion_chat_id(chat) -> int | None:
+    linked = getattr(chat, "linked_chat", None)
+    if linked is not None:
+        return linked.id
+    return getattr(chat, "linked_chat_id", None)
+
+
+def _user_id_from_raw(message: Message) -> int | None:
+    raw_msg = getattr(message, "raw", None)
+    from_id = getattr(raw_msg, "from_id", None) if raw_msg else None
+    if isinstance(from_id, raw.types.PeerUser):
+        return from_id.user_id
+    return None
+
+
+async def _resolve_comment_user(
+    bot: Client,
+    app: Client,
+    comment: Message,
+    discussion_chat_id: int | None,
+) -> User | None:
+    if comment.from_user:
+        return comment.from_user
+
+    user_id = _user_id_from_raw(comment)
+    if user_id:
+        try:
+            user = await bot.floodwait_handler(app.get_users, user_id)
+            if isinstance(user, User):
+                return user
+        except Exception:
+            pass
+
+    if not discussion_chat_id:
+        return None
+
+    try:
+        refetched = await bot.floodwait_handler(
+            app.get_messages, discussion_chat_id, comment.id
+        )
+    except Exception:
+        return None
+
+    if not refetched:
+        return None
+    if refetched.from_user:
+        return refetched.from_user
+
+    user_id = _user_id_from_raw(refetched)
+    if not user_id:
+        return None
+    try:
+        user = await bot.floodwait_handler(app.get_users, user_id)
+        return user if isinstance(user, User) else None
+    except Exception:
+        return None
+
+
+def _chat_peer_id(peer) -> int | None:
+    if peer is None:
+        return None
+    if isinstance(peer, int):
+        return peer
+    return getattr(peer, "id", None)
+
+
+def _chat_username(peer) -> str:
+    if peer is None or isinstance(peer, int):
+        return ""
+    return (getattr(peer, "username", None) or "").lower()
+
 
 def _link_chat_matches(chat, link_chat_id) -> bool:
-    if isinstance(link_chat_id, int):
-        return chat.id == link_chat_id
-    name = str(link_chat_id).lstrip("@").lower()
-    username = (getattr(chat, "username", None) or "").lower()
-    return bool(username) and username == name
+    other_id = _chat_peer_id(link_chat_id)
+    if other_id is not None and chat.id == other_id:
+        return True
+
+    linked_id = getattr(chat, "linked_chat_id", None)
+    if other_id is not None and linked_id is not None and linked_id == other_id:
+        return True
+
+    if not isinstance(link_chat_id, int):
+        other_linked_id = getattr(link_chat_id, "linked_chat_id", None)
+        if other_linked_id is not None and other_linked_id == chat.id:
+            return True
+
+    chat_username = _chat_username(chat)
+    other_username = _chat_username(link_chat_id)
+    if other_username and chat_username and other_username == chat_username:
+        return True
+
+    if isinstance(link_chat_id, str):
+        name = link_chat_id.lstrip("@").lower()
+        return bool(chat_username) and chat_username == name
+
+    return False
 
 
-def parse_post_tokens(text: str, chat) -> tuple[list[int], list[str]]:
+def parse_post_tokens(
+    text: str, chat
+) -> tuple[list[int], list[str], dict[int, str]]:
     post_ids: list[int] = []
     invalid: list[str] = []
+    post_links: dict[int, str] = {}
     seen: set[int] = set()
 
-    for token in re.split(r"[\s,]+", text):
+    links = _POST_LINK_RE.findall(text)
+    remainder = _POST_LINK_RE.sub(" ", text)
+
+    for raw_link in links:
+        link = _normalize_post_link(raw_link)
+        parts = get_link_parts(link)
+        if not parts or not _link_chat_matches(chat, parts[0]):
+            invalid.append(raw_link)
+            continue
+        post_id = parts[1]
+        if post_id in seen:
+            continue
+        seen.add(post_id)
+        post_ids.append(post_id)
+        post_links[post_id] = link
+
+    for token in re.split(r"[\s,]+", remainder):
+        token = token.strip()
         if not token:
             continue
         if token.isdigit():
@@ -91,18 +235,9 @@ def parse_post_tokens(text: str, chat) -> tuple[list[int], list[str]]:
                 seen.add(post_id)
                 post_ids.append(post_id)
             continue
-
-        parts = get_link_parts(token)
-        if parts and _link_chat_matches(chat, parts[0]):
-            post_id = parts[1]
-            if post_id not in seen:
-                seen.add(post_id)
-                post_ids.append(post_id)
-            continue
-
         invalid.append(token)
 
-    return post_ids, invalid
+    return post_ids, invalid, post_links
 
 
 @Client.on_message(
@@ -139,7 +274,8 @@ async def scrape(bot: Client, message: Message):
             "⚠️ Send a group or channel id, username, or forward a message from that chat."
         )
 
-    chat = await resolve_chat(app, chat_ref)
+    # chat = await resolve_chat(app, chat_ref)
+    chat = await bot.floodwait_handler(resolve_chat, app, chat_ref)
     if not chat:        
         return await message.reply_text(
             "⚠️ Could not access that chat.\n"
@@ -177,38 +313,49 @@ async def scrape(bot: Client, message: Message):
         pass
 
     post_ids = None
+    post_link_by_id: dict[int, str] = {}
     if mode == "selected":
         post_ids = []
         seen_post_ids: set[int] = set()
         while True:
-            ask = await message.chat.ask(
-                "Send one post reference now:\n"
-                "• forward a post from this channel/group\n"
-                "• post id\n"
-                "• post link\n\n"
-                "You can send multiple ids/links together, separated by spaces or commas.\n"
-                "Example:\n"
-                "1\n"
-                "https://t.me/channel/12, https://t.me/c/1234567890/45\n\n"
-                "/cancel to cancel ❌"
+            ask = await message.chat.ask("""
+                Send one post reference now:\n
+
+• Forward a post from this channel/group
+• Enter the post ID
+• Send the post link
+
+You can send **multiple IDs or links** at once, separated by spaces or commas.
+
+**Example:**
+1
+https://t.me/channel/12, https://t.me/c/1234567890/45
+
+/cancel to cancel ❌""",
+                disable_web_page_preview=True,
             )
             if await is_input_cancelled(ask):
                 return
 
             new_ids: list[int] = []
+            new_links: dict[int, str] = {}
             invalid_tokens: list[str] = []
-            forwarded_chat = getattr(ask, "forward_from_chat", None)
-            forwarded_message_id = getattr(ask, "forward_from_message_id", None)
-            if forwarded_chat and forwarded_message_id:
-                if _link_chat_matches(chat, forwarded_chat.id):
+            forwarded_chat, forwarded_message_id = forward_post_ref(ask)
+            has_forward = forwarded_chat is not None and forwarded_message_id is not None
+            if has_forward:
+                if _link_chat_matches(chat, forwarded_chat):
                     new_ids.append(forwarded_message_id)
+                    new_links[forwarded_message_id] = build_post_link(
+                        forwarded_chat, forwarded_message_id
+                    )
                 else:
-                    invalid_tokens.append("forwarded-post-from-other-chat")
+                    invalid_tokens.append("forwarded post (from a different chat)")
 
             raw = (ask.text or "").strip()
-            if raw:
-                parsed_ids, invalid = parse_post_tokens(raw, chat)
+            if raw and not has_forward:
+                parsed_ids, invalid, parsed_links = parse_post_tokens(raw, chat)
                 new_ids.extend(parsed_ids)
+                new_links.update(parsed_links)
                 invalid_tokens.extend(invalid)
 
             added_now = 0
@@ -217,6 +364,9 @@ async def scrape(bot: Client, message: Message):
                     continue
                 seen_post_ids.add(post_id)
                 post_ids.append(post_id)
+                post_link_by_id[post_id] = new_links.get(
+                    post_id, build_post_link(chat, post_id)
+                )
                 added_now += 1
 
             if invalid_tokens:
@@ -255,7 +405,7 @@ async def scrape(bot: Client, message: Message):
         if not post_ids:
             return await message.reply_text("❌ No valid post ids found.")
 
-    await run_scrape(bot, message, app, chat, post_ids)
+    await run_scrape(bot, message, app, chat, post_ids, post_link_by_id)
 
 
 def _post_replies(post):
@@ -320,6 +470,7 @@ async def _floodwait_aiter(bot: Client, aiter):
 
 async def _edit_progress(status: Message, processed, total, comments_processed, qualifying):
     with suppress(Exception):
+        await asyncio.sleep(0.5)
         await status.edit_text(
             _progress_text(processed, total, comments_processed, qualifying)
         )
@@ -356,7 +507,7 @@ async def fetch_users(bot: Client, app: Client, user_ids: list[int]) -> list[Use
     return users
 
 
-async def save_qualifying_user(user: User, source_chat, csv_rows: dict):
+async def save_qualifying_user(user: User, source_chat, source_post_link, csv_rows: dict):
     if user.id in csv_rows:
         return
     await db.commented_users.upsert_user(
@@ -366,15 +517,16 @@ async def save_qualifying_user(user: User, source_chat, csv_rows: dict):
         last_name=user.last_name,
         is_premium=bool(user.is_premium),
         source_chat=source_chat,
+        source_post_link=source_post_link,
     )
     csv_rows[user.id] = {
         "telegram_id": user.id,
         "username": user.username,
         "first_name": user.first_name,
         "last_name": user.last_name,
-        "is_bot": bool(user.is_bot),
         "is_premium": bool(user.is_premium),
         "source_chat": source_chat,
+        "source_post_link": source_post_link,
     }
 
 
@@ -387,10 +539,12 @@ async def process_comment_batch(
     seen_on_post: set[int],
     activity_cache: dict[int, bool],
     csv_rows: dict,
+    source_post_link: str,
+    discussion_chat_id: int | None = None,
 ):
     new_ids: list[int] = []
     for comment in comments:
-        user = comment.from_user
+        user = await _resolve_comment_user(bot, app, comment, discussion_chat_id)
         if not user:
             continue
         await db.comments.create(chat_id, comment.id, post_id, user.id)
@@ -410,7 +564,7 @@ async def process_comment_batch(
         active = is_active_last_7_days(user)
         activity_cache[user_id] = active
         if active and user:
-            await save_qualifying_user(user, chat_id, csv_rows)
+            await save_qualifying_user(user, chat_id, source_post_link, csv_rows)
 
 
 async def scrape_post_comments(
@@ -420,6 +574,8 @@ async def scrape_post_comments(
     post_id: int,
     activity_cache: dict[int, bool],
     csv_rows: dict,
+    source_post_link: str,
+    discussion_chat_id: int | None = None,
 ) -> int:
     batch: list = []
     seen_on_post: set[int] = set()
@@ -433,14 +589,34 @@ async def scrape_post_comments(
             continue
         comments_processed += len(batch)
         await process_comment_batch(
-            bot, app, chat_id, post_id, batch, seen_on_post, activity_cache, csv_rows
+            bot,
+            app,
+            chat_id,
+            post_id,
+            batch,
+            seen_on_post,
+            activity_cache,
+            csv_rows,
+            source_post_link,
+            discussion_chat_id,
         )
         batch = []
+        if COMMENT_BATCH_SLEEP_SECONDS > 0:
+            await asyncio.sleep(COMMENT_BATCH_SLEEP_SECONDS)
 
     if batch:
         comments_processed += len(batch)
         await process_comment_batch(
-            bot, app, chat_id, post_id, batch, seen_on_post, activity_cache, csv_rows
+            bot,
+            app,
+            chat_id,
+            post_id,
+            batch,
+            seen_on_post,
+            activity_cache,
+            csv_rows,
+            source_post_link,
+            discussion_chat_id,
         )
 
     return comments_processed
@@ -450,11 +626,14 @@ async def run_scrape(
     bot: Client,
     message: Message,
     app: Client,
-    chat,
+    chat: Chat,
     post_ids: list[int] | None,
+    post_link_by_id: dict[int, str] | None = None,
 ):
     status = await message.reply_text("Scraping started...")
     chat_id = chat.id
+    discussion_chat_id = _discussion_chat_id(chat)
+    post_links = post_link_by_id or {}
 
     if post_ids is None:
         try:
@@ -475,19 +654,27 @@ async def run_scrape(
     csv_rows: dict = {}
     activity_cache: dict[int, bool] = {}
     failed: list[dict] = []
-
-    await _edit_progress(status, 0, total, 0, 0)
+    await asyncio.sleep(0.5)
+    await bot.floodwait_handler(_edit_progress, status, 0, total, 0, 0)
 
     for index, post_id in enumerate(post_ids, start=1):
+        source_post_link = post_links.get(post_id) or build_post_link(chat, post_id)
         try:
             comments_processed += await scrape_post_comments(
-                bot, app, chat_id, post_id, activity_cache, csv_rows
+                bot,
+                app,
+                chat_id,
+                post_id,
+                activity_cache,
+                csv_rows,
+                source_post_link,
+                discussion_chat_id,
             )
         except Exception as e:
             logger.exception("Failed to scrape post %s in chat %s", post_id, chat_id)
             failed.append({"post_id": post_id, "error": str(e)})
 
-        await _edit_progress(
+        await bot.floodwait_handler(_edit_progress,
             status, index, total, comments_processed, len(csv_rows)
         )
         if index < total:

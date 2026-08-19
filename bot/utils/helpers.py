@@ -270,7 +270,10 @@ def get_link_parts(link: str):
             return
 
     if not link.startswith("http"):
-        return
+        if link.startswith(("t.me/", "telegram.me/", "telegram.dog/")):
+            link = f"https://{link}"
+        else:
+            return
 
     link = (
         link.replace("https://", "")

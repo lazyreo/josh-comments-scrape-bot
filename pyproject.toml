@@ -8,6 +8,7 @@ dependencies = [
     "apscheduler>=3.11.3",
     "ffmpeg>=1.4",
     "kurigram>=2.2.24",
+    "loguru>=0.7.3",
     "motor>=3.7.1",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.15.0",

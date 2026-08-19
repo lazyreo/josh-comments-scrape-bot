@@ -13,6 +13,7 @@ class CommentedUsers(Core):
         last_name=None,
         is_premium=False,
         source_chat=None,
+        source_post_link=None,
     ):
         return await super().create(
             {
@@ -22,6 +23,7 @@ class CommentedUsers(Core):
                 "last_name": last_name,
                 "is_premium": is_premium,
                 "source_chat": source_chat,
+                "source_post_link": source_post_link,
             }
         )
 
@@ -33,6 +35,7 @@ class CommentedUsers(Core):
         last_name=None,
         is_premium=False,
         source_chat=None,
+        source_post_link=None,
     ):
         existing = await self.read(user_id)
         if existing:
@@ -44,4 +47,5 @@ class CommentedUsers(Core):
             last_name=last_name,
             is_premium=is_premium,
             source_chat=source_chat,
+            source_post_link=source_post_link,
         )

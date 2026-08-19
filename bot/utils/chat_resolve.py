@@ -20,11 +20,26 @@ def chat_title(chat) -> str:
 def parse_chat_ref(ask: Message):
     chat_ref, _ = parse_chat_input(ask)
     return chat_ref
-    
+
+
+def forward_post_ref(message: Message):
+    """Return (source chat, message id) for a forwarded channel/group post."""
+    origin = getattr(message, "forward_origin", None)
+    if origin is not None:
+        chat = getattr(origin, "chat", None) or getattr(origin, "sender_chat", None)
+        msg_id = getattr(origin, "message_id", None)
+        if chat is not None and msg_id is not None:
+            return chat, msg_id
+
+    chat = getattr(message, "forward_from_chat", None)
+    msg_id = getattr(message, "forward_from_message_id", None)
+    if chat is not None and msg_id is not None:
+        return chat, msg_id
+    return None, None
+
 
 def parse_chat_input(ask: Message):
-    forwarded_chat = ask.forward_from_chat.id if ask.forward_from_chat else None
-    forwarded_post_id = ask.forward_from_message_id if ask.forward_from_message_id else None
+    forwarded_chat, forwarded_post_id = forward_post_ref(ask)
     if forwarded_chat:
         return forwarded_chat.id, forwarded_post_id
     if ask.forward_from:

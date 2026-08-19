@@ -26,6 +26,9 @@ class Config(BaseSettings):
     OWNER_ID: int
 
     SLEEP_TIME: int = 10
+    SCRAPE_COMMENT_BATCH_SIZE: int = 100
+    SCRAPE_COMMENT_BATCH_SLEEP_SECONDS: float = 2.0
+    SCRAPE_POST_SLEEP_SECONDS: float = 2.0
 
     CLIENTS: Dict[Any, Any] = Field(default_factory=dict, exclude=True)
     TRANSFERS: Dict[Any, Any] = Field(default_factory=dict, exclude=True)
