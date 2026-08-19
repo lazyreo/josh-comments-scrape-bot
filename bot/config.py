@@ -62,6 +62,11 @@ You can also paste a `t.me` link to forward that message (if that Source has a f
 
 3. **Paste a link** — Send a `https://t.me/...` link to forward that message through an existing Source → Destination forward.
 
+4. **/scrape** — Collect the users who commented on a specific post, or collect commenters from all posts in a channel.
+ - **Specific post:** Send the post link when prompted.
+  - **All posts:** Choose the option to scrape commenters from all available posts.
+
+
 Need help? Contact support.
 """
 

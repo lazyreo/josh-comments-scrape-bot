@@ -128,7 +128,7 @@ async def scrape(bot: Client, message: Message):
             "⚠️ Send a group or channel id, username, or forward a message from that chat."
         )
 
-    chat = await resolve_chat(app, chat_ref)
+    chat = await bot.floodwait_handler(resolve_chat, app, chat_ref)
     if not chat:
         return await message.reply_text(
             "⚠️ Could not access that chat.\n"
@@ -241,6 +241,15 @@ def _progress_text(processed: int, total: int, comments_processed: int, qualifyi
     )
 
 
+async def _floodwait_aiter(bot: Client, aiter):
+    it = aiter.__aiter__()
+    while True:
+        try:
+            yield await bot.floodwait_handler(it.__anext__)
+        except StopAsyncIteration:
+            break
+
+
 async def _edit_progress(status: Message, processed, total, comments_processed, qualifying):
     with suppress(Exception):
         await status.edit_text(
@@ -248,9 +257,9 @@ async def _edit_progress(status: Message, processed, total, comments_processed, 
         )
 
 
-async def collect_commented_posts(app: Client, chat) -> list[int]:
+async def collect_commented_posts(bot: Client, app: Client, chat) -> list[int]:
     post_ids: list[int] = []
-    async for post in app.get_chat_history(chat.id):
+    async for post in _floodwait_aiter(bot, app.get_chat_history(chat.id)):
         if not _has_comments(post):
             continue
         post_ids.append(post.id)
@@ -258,12 +267,12 @@ async def collect_commented_posts(app: Client, chat) -> list[int]:
     return post_ids
 
 
-async def fetch_users(app: Client, user_ids: list[int]) -> list[User]:
+async def fetch_users(bot: Client, app: Client, user_ids: list[int]) -> list[User]:
     users: list[User] = []
     for i in range(0, len(user_ids), GET_USERS_LIMIT):
         chunk = user_ids[i : i + GET_USERS_LIMIT]
         try:
-            result = await app.get_users(chunk)
+            result = await bot.floodwait_handler(app.get_users, chunk)
             if isinstance(result, User):
                 result = [result]
             users.extend(u for u in result if isinstance(u, User))
@@ -271,7 +280,7 @@ async def fetch_users(app: Client, user_ids: list[int]) -> list[User]:
             logger.warning("Batch get_users failed (%s), retrying one by one", e)
             for user_id in chunk:
                 try:
-                    user = await app.get_users(user_id)
+                    user = await bot.floodwait_handler(app.get_users, user_id)
                     if isinstance(user, User):
                         users.append(user)
                 except Exception as err:
@@ -302,6 +311,7 @@ async def save_qualifying_user(user: User, source_chat, csv_rows: dict):
 
 
 async def process_comment_batch(
+    bot: Client,
     app: Client,
     chat_id,
     post_id: int,
@@ -325,7 +335,7 @@ async def process_comment_batch(
     if not new_ids:
         return
 
-    fetched = await fetch_users(app, new_ids)
+    fetched = await fetch_users(bot, app, new_ids)
     by_id = {user.id: user for user in fetched}
     for user_id in new_ids:
         user = by_id.get(user_id)
@@ -336,6 +346,7 @@ async def process_comment_batch(
 
 
 async def scrape_post_comments(
+    bot: Client,
     app: Client,
     chat_id,
     post_id: int,
@@ -346,20 +357,22 @@ async def scrape_post_comments(
     seen_on_post: set[int] = set()
     comments_processed = 0
 
-    async for comment in app.get_discussion_replies(chat_id, post_id):
+    async for comment in _floodwait_aiter(
+        bot, app.get_discussion_replies(chat_id, post_id)
+    ):
         batch.append(comment)
         if len(batch) < COMMENT_BATCH_SIZE:
             continue
         comments_processed += len(batch)
         await process_comment_batch(
-            app, chat_id, post_id, batch, seen_on_post, activity_cache, csv_rows
+            bot, app, chat_id, post_id, batch, seen_on_post, activity_cache, csv_rows
         )
         batch = []
 
     if batch:
         comments_processed += len(batch)
         await process_comment_batch(
-            app, chat_id, post_id, batch, seen_on_post, activity_cache, csv_rows
+            bot, app, chat_id, post_id, batch, seen_on_post, activity_cache, csv_rows
         )
 
     return comments_processed
@@ -377,11 +390,13 @@ async def run_scrape(
 
     if post_ids is None:
         try:
-            post_ids = await collect_commented_posts(app, chat)
+            post_ids = await collect_commented_posts(bot, app, chat)
         except Exception as e:
             logger.exception("Failed to collect posts from %s", chat_id)
             with suppress(Exception):
-                await status.edit_text(f"⚠️ Failed to fetch posts: {e}")
+                await bot.floodwait_handler(
+                    status.edit_text, f"⚠️ Failed to fetch posts: {e}"
+                )
             return
     else:
         for post_id in post_ids:
@@ -398,7 +413,7 @@ async def run_scrape(
     for index, post_id in enumerate(post_ids, start=1):
         try:
             comments_processed += await scrape_post_comments(
-                app, chat_id, post_id, activity_cache, csv_rows
+                bot, app, chat_id, post_id, activity_cache, csv_rows
             )
         except Exception as e:
             logger.exception("Failed to scrape post %s in chat %s", post_id, chat_id)
@@ -450,7 +465,8 @@ async def finish_scrape(
         file_path = os.path.join("downloads", f"{admin_id}_users.csv")
         try:
             _write_users_csv(file_path, csv_rows)
-            await bot.send_document(
+            await bot.floodwait_handler(
+                bot.send_document,
                 chat_id=message.chat.id,
                 document=file_path,
                 file_name="users.csv",
@@ -464,4 +480,6 @@ async def finish_scrape(
                 os.remove(file_path)
 
     with suppress(Exception):
-        await status.edit_text(_finish_text(len(csv_rows), failed))
+        await bot.floodwait_handler(
+            status.edit_text, _finish_text(len(csv_rows), failed)
+        )

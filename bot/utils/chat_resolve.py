@@ -1,6 +1,6 @@
 """Resolve Telegram chat references from user input."""
 
-from pyrogram import Client
+from pyrogram import Client, errors
 from pyrogram.types import Message
 
 
@@ -33,9 +33,13 @@ def parse_chat_ref(ask: Message):
 async def resolve_chat(app: Client, chat_ref):
     try:
         return await app.get_chat(chat_ref)
+    except errors.FloodWait:
+        raise
     except Exception:
         pass
     try:
         return await app.get_users(chat_ref)
+    except errors.FloodWait:
+        raise
     except Exception:
         return None
