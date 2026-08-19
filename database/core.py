@@ -19,6 +19,10 @@ class Core:
         result = await self.col.update_one({"_id": _id}, {f"${tag}": query})
         return result.modified_count
 
+    async def upsert(self, _id, fields):
+        result = await self.col.update_one({"_id": _id}, {"$set": fields}, upsert=True)
+        return result.upserted_id or result.modified_count
+
     async def delete(self, _id):
         result = await self.col.delete_one({"_id": _id})
         return result.deleted_count
