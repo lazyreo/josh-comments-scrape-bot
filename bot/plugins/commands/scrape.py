@@ -1,5 +1,7 @@
 import asyncio
+import csv
 import logging
+import os
 import re
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
@@ -26,6 +28,15 @@ COMMENT_BATCH_SIZE = 500
 GET_USERS_LIMIT = 200
 POST_SLEEP_SECONDS = 2
 ACTIVE_WITHIN = timedelta(days=7)
+CSV_COLUMNS = [
+    "telegram_id",
+    "username",
+    "first_name",
+    "last_name",
+    "is_bot",
+    "is_premium",
+    "source_chat",
+]
 _ACTIVE_STATUSES = {
     UserStatus.ONLINE,
     UserStatus.RECENTLY,
@@ -405,3 +416,52 @@ async def run_scrape(
         len(csv_rows),
         [item["post_id"] for item in failed],
     )
+    await finish_scrape(bot, message, status, csv_rows, failed)
+
+
+def _write_users_csv(path: str, csv_rows: dict) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+        writer.writeheader()
+        writer.writerows(csv_rows.values())
+
+
+def _finish_text(qualifying: int, failed: list[dict]) -> str:
+    if qualifying:
+        lines = ["Scrape finished.", f"Qualifying users: {qualifying:,}"]
+    else:
+        lines = ["Scrape finished.", "No qualifying users found."]
+    if failed:
+        ids = ", ".join(str(item["post_id"]) for item in failed)
+        lines.append(f"Failed posts: {ids}")
+    return "\n".join(lines)
+
+
+async def finish_scrape(
+    bot: Client,
+    message: Message,
+    status: Message,
+    csv_rows: dict,
+    failed: list[dict],
+):
+    if csv_rows:
+        admin_id = message.from_user.id
+        file_path = os.path.join("downloads", f"{admin_id}_users.csv")
+        try:
+            _write_users_csv(file_path, csv_rows)
+            await bot.send_document(
+                chat_id=message.chat.id,
+                document=file_path,
+                file_name="users.csv",
+            )
+        except Exception as e:
+            logger.exception("Failed to send users.csv")
+            with suppress(Exception):
+                await message.reply_text(f"⚠️ Failed to send users.csv: {e}")
+        finally:
+            with suppress(OSError):
+                os.remove(file_path)
+
+    with suppress(Exception):
+        await status.edit_text(_finish_text(len(csv_rows), failed))
