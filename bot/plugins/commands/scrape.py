@@ -19,7 +19,7 @@ from bot.utils import (
     get_user_client,
     is_input_cancelled,
 )
-from bot.utils.chat_resolve import parse_chat_ref, resolve_chat
+from bot.utils.chat_resolve import parse_chat_input, resolve_chat
 from database import db
 
 logger = logging.getLogger(__name__)
@@ -55,6 +55,16 @@ _MODE_MARKUP = InlineKeyboardMarkup(
             InlineKeyboardButton("Selected", callback_data="scrape_mode_selected"),
         ],
         [InlineKeyboardButton("❌ Cancel", callback_data="scrape_mode_cancel")],
+    ]
+)
+
+_DONE_MARKUP = InlineKeyboardMarkup(
+    [
+        [
+            InlineKeyboardButton("✅ Done", callback_data="scrape_done_yes"),
+            InlineKeyboardButton("➕ Add more", callback_data="scrape_done_no"),
+        ],
+        [InlineKeyboardButton("❌ Cancel", callback_data="scrape_done_cancel")],
     ]
 )
 
@@ -113,33 +123,38 @@ async def scrape(bot: Client, message: Message):
         )
 
     ask = await message.chat.ask(
-        "Send the group or channel **id or username** to scrape comments from.\n\n"
+        "Send the group or channel **id or username** or **forward a message from that chat** to scrape comments from.\n\n"
         "Example:\n"
         "• `@channel`\n"
         "• `-1001234567890`\n\n"
+        "• `forward a message from that chat`\n"
         "/cancel to cancel ❌"
     )
     if await is_input_cancelled(ask):
         return
 
-    chat_ref = parse_chat_ref(ask)
+    chat_ref, _ = parse_chat_input(ask)
     if chat_ref is None:
         return await message.reply_text(
             "⚠️ Send a group or channel id, username, or forward a message from that chat."
         )
 
-    chat = await bot.floodwait_handler(resolve_chat, app, chat_ref)
-    if not chat:
+    chat = await resolve_chat(app, chat_ref)
+    if not chat:        
         return await message.reply_text(
             "⚠️ Could not access that chat.\n"
             "Join it with the connected account and try again."
         )
 
+    mode_text = (
+        "Choose what to scrape:\n\n"
+        "• **All** — every post with comments\n"
+        "• **Selected** — specific posts, post ids or links"
+    )
+
     try:
         choice = await message.chat.ask(
-            "Choose what to scrape:\n\n"
-            "• **All** — every post with comments\n"
-            "• **Selected** — specific post ids or links",
+            mode_text,
             filters=filters.regex(r"^scrape_mode_(all|selected|cancel)$"),
             listener_type=ListenerTypes.CALLBACK_QUERY,
             user_id=user_id,
@@ -163,27 +178,80 @@ async def scrape(bot: Client, message: Message):
 
     post_ids = None
     if mode == "selected":
-        ask = await message.chat.ask(
-            "Send post ids and/or links, separated by spaces or commas.\n\n"
-            "Example:\n"
-            "1 2 3\n"
-            "https://t.me/channel/12, https://t.me/c/1234567890/45\n\n"
-            "/cancel to cancel ❌"
-        )
-        if await is_input_cancelled(ask):
-            return
-
-        raw = (ask.text or "").strip()
-        if not raw:
-            return await message.reply_text(
-                "⚠️ Send post ids and/or links, separated by spaces or commas."
+        post_ids = []
+        seen_post_ids: set[int] = set()
+        while True:
+            ask = await message.chat.ask(
+                "Send one post reference now:\n"
+                "• forward a post from this channel/group\n"
+                "• post id\n"
+                "• post link\n\n"
+                "You can send multiple ids/links together, separated by spaces or commas.\n"
+                "Example:\n"
+                "1\n"
+                "https://t.me/channel/12, https://t.me/c/1234567890/45\n\n"
+                "/cancel to cancel ❌"
             )
+            if await is_input_cancelled(ask):
+                return
 
-        post_ids, invalid = parse_post_tokens(raw, chat)
-        if invalid:
-            await message.reply_text(
-                f"⚠️ Invalid tokens (skipped): {', '.join(invalid)}"
-            )
+            new_ids: list[int] = []
+            invalid_tokens: list[str] = []
+            forwarded_chat = getattr(ask, "forward_from_chat", None)
+            forwarded_message_id = getattr(ask, "forward_from_message_id", None)
+            if forwarded_chat and forwarded_message_id:
+                if _link_chat_matches(chat, forwarded_chat.id):
+                    new_ids.append(forwarded_message_id)
+                else:
+                    invalid_tokens.append("forwarded-post-from-other-chat")
+
+            raw = (ask.text or "").strip()
+            if raw:
+                parsed_ids, invalid = parse_post_tokens(raw, chat)
+                new_ids.extend(parsed_ids)
+                invalid_tokens.extend(invalid)
+
+            added_now = 0
+            for post_id in new_ids:
+                if post_id in seen_post_ids:
+                    continue
+                seen_post_ids.add(post_id)
+                post_ids.append(post_id)
+                added_now += 1
+
+            if invalid_tokens:
+                await message.reply_text(
+                    f"⚠️ Invalid tokens (skipped): {', '.join(invalid_tokens)}"
+                )
+            if not added_now:
+                await message.reply_text(
+                    "⚠️ No valid post id found in that input. Try again."
+                )
+                continue
+
+            try:
+                done_choice = await message.chat.ask(
+                    f"Added **{added_now}** post(s). Total selected: **{len(post_ids)}**.\n\nDone?",
+                    filters=filters.regex(r"^scrape_done_(yes|no|cancel)$"),
+                    listener_type=ListenerTypes.CALLBACK_QUERY,
+                    user_id=user_id,
+                    reply_markup=_DONE_MARKUP,
+                )
+            except ListenerStopped:
+                return await message.reply_text("❌ Operation cancelled.")
+            except Exception as e:
+                return await message.reply_text(f"🚫 Error: {e}")
+
+            await done_choice.answer()
+            if done_choice.data == "scrape_done_cancel":
+                await done_choice.message.edit_text("❌ Operation cancelled.")
+                return
+            if done_choice.data == "scrape_done_yes":
+                with suppress(Exception):
+                    await done_choice.message.edit_reply_markup(None)
+                break
+            with suppress(Exception):
+                await done_choice.message.edit_reply_markup(None)
         if not post_ids:
             return await message.reply_text("❌ No valid post ids found.")
 

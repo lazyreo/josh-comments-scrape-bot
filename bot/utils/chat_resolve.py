@@ -18,16 +18,23 @@ def chat_title(chat) -> str:
 
 
 def parse_chat_ref(ask: Message):
-    if ask.forward_from_chat:
-        return ask.forward_from_chat.id
+    chat_ref, _ = parse_chat_input(ask)
+    return chat_ref
+    
+
+def parse_chat_input(ask: Message):
+    forwarded_chat = ask.forward_from_chat.id if ask.forward_from_chat else None
+    forwarded_post_id = ask.forward_from_message_id if ask.forward_from_message_id else None
+    if forwarded_chat:
+        return forwarded_chat.id, forwarded_post_id
     if ask.forward_from:
-        return ask.forward_from.id
+        return ask.forward_from.id, None
     if not ask.text:
-        return None
+        return None, None
     text = ask.text.strip()
     if text.replace("-", "").isdigit():
-        return int(text)
-    return text.replace("@", "")
+        return int(text), None
+    return text.replace("@", ""), None
 
 
 async def resolve_chat(app: Client, chat_ref):
