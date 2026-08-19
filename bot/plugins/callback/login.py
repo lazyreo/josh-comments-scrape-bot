@@ -147,12 +147,6 @@ async def generate_session(bot: Client, msg: Message):
     string_session = await client.export_session_string()
     me = await client.get_me()
 
-    if me.id != user_id:
-        await msg.reply(
-            "🚫 You are not the owner of this account. Log in with your own number.",
-            reply_markup=InlineKeyboardMarkup(Data.generate_button),
-        )
-        return
 
     await db.users.update(
         user_id,
