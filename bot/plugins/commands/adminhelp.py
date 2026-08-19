@@ -23,6 +23,7 @@ async def admin(client: Client, message: Message):
 
 📢 Others:
 /broadcast - Broadcast a message to all users
+/scrape - Scrape commenters from a channel or group
 """
 
     await client.reply(message, text)
