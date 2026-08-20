@@ -51,7 +51,7 @@ async def forward_message(
                 log = await app.send_message(chat_id=dest, text=new_text)
     else:
         with suppress(Exception):
-            sent = await app.forward_messages(dest, message.chat.id, message.id)
+            sent = await app.copy_message(dest, message.chat.id, message.id)
             log = sent[0] if isinstance(sent, list) else sent
 
         if not log:

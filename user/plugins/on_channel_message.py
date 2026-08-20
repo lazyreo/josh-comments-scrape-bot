@@ -45,7 +45,7 @@ async def _send_to_dest(
         return None
 
     with suppress(Exception):
-        sent = await client.forward_messages(dest_id, message.chat.id, message.id)
+        sent = await client.copy_message(dest_id, message.chat.id, message.id)
         return sent[0] if isinstance(sent, list) else sent
 
     with suppress(Exception):

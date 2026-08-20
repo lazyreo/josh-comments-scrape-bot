@@ -28,7 +28,7 @@ COMMENT_BATCH_SIZE = max(1, int(settings.SCRAPE_COMMENT_BATCH_SIZE))
 COMMENT_BATCH_SLEEP_SECONDS = max(0.0, float(settings.SCRAPE_COMMENT_BATCH_SLEEP_SECONDS))
 GET_USERS_LIMIT = 200
 POST_SLEEP_SECONDS = max(0.0, float(settings.SCRAPE_POST_SLEEP_SECONDS))
-ACTIVE_WITHIN = timedelta(days=7)
+ACTIVE_WITHIN = timedelta(days=4)
 CSV_COLUMNS = [
     "telegram_id",
     "username",
@@ -36,14 +36,17 @@ CSV_COLUMNS = [
     "last_name",
     "is_premium",
     "source_chat",
-    "source_post_link"
+    "source_post_link",
+    "reaction",
+    "count",
 ]
+REACTION_LIST_LIMIT = 100
 _ACTIVE_STATUSES = {
     UserStatus.ONLINE,
     UserStatus.RECENTLY,
-    UserStatus.LAST_WEEK,
 }
 _INACTIVE_STATUSES = {
+    UserStatus.LAST_WEEK,
     UserStatus.LAST_MONTH,
     UserStatus.LONG_AGO,
     UserStatus.OFFLINE,
@@ -431,7 +434,7 @@ def _as_utc(value: int | float | datetime | UserStatus | None) -> datetime | Non
     return value
 
 
-def is_active_last_7_days(user: User | None) -> bool:
+def is_active_last_4_days(user: User | None) -> bool:
     if not user:
         return False
 
@@ -450,13 +453,50 @@ def is_active_last_7_days(user: User | None) -> bool:
     return was_online >= datetime.now(timezone.utc) - ACTIVE_WITHIN
 
 
-def _progress_text(processed: int, total: int, comments_processed: int, qualifying: int) -> str:
+def _progress_text(
+    processed: int,
+    total: int,
+    comments_processed: int,
+    reactions_processed: int,
+    qualifying: int,
+) -> str:
     return (
         "Scraping started...\n"
         f"Posts processed: {processed} / {total}\n"
         f"Comments processed: {comments_processed:,}\n"
+        f"Reactions processed: {reactions_processed:,}\n"
         f"Qualifying users: {qualifying:,}"
     )
+
+
+def _reaction_key(reaction) -> str | None:
+    if isinstance(reaction, raw.types.ReactionEmoji):
+        return reaction.emoticon
+    if isinstance(reaction, raw.types.ReactionCustomEmoji):
+        return f"custom:{reaction.document_id}"
+    if isinstance(reaction, raw.types.ReactionPaid):
+        return "paid"
+    return None
+
+
+def _merge_reactions(target: dict[str, int], incoming: dict[str, int]) -> None:
+    for key, count in incoming.items():
+        target[key] = target.get(key, 0) + count
+
+
+def _csv_row(row: dict) -> dict:
+    reactions = row.get("_reactions") or {}
+    return {
+        "telegram_id": row.get("telegram_id"),
+        "username": row.get("username"),
+        "first_name": row.get("first_name"),
+        "last_name": row.get("last_name"),
+        "is_premium": row.get("is_premium"),
+        "source_chat": row.get("source_chat"),
+        "source_post_link": row.get("source_post_link"),
+        "reaction": ",".join(reactions.keys()),
+        "count": ",".join(str(v) for v in reactions.values()),
+    }
 
 
 async def _floodwait_aiter(bot: Client, aiter):
@@ -468,11 +508,20 @@ async def _floodwait_aiter(bot: Client, aiter):
             break
 
 
-async def _edit_progress(status: Message, processed, total, comments_processed, qualifying):
+async def _edit_progress(
+    status: Message,
+    processed,
+    total,
+    comments_processed,
+    reactions_processed,
+    qualifying,
+):
     with suppress(Exception):
         await asyncio.sleep(0.5)
         await status.edit_text(
-            _progress_text(processed, total, comments_processed, qualifying)
+            _progress_text(
+                processed, total, comments_processed, reactions_processed, qualifying
+            )
         )
 
 
@@ -507,9 +556,19 @@ async def fetch_users(bot: Client, app: Client, user_ids: list[int]) -> list[Use
     return users
 
 
-async def save_qualifying_user(user: User, source_chat, source_post_link, csv_rows: dict):
+async def save_qualifying_user(
+    user: User,
+    source_chat,
+    source_post_link,
+    csv_rows: dict,
+    reactions: dict[str, int] | None = None,
+):
+    reactions = reactions or {}
     if user.id in csv_rows:
+        if reactions:
+            _merge_reactions(csv_rows[user.id].setdefault("_reactions", {}), reactions)
         return
+
     await db.commented_users.upsert_user(
         user.id,
         username=user.username,
@@ -527,6 +586,7 @@ async def save_qualifying_user(user: User, source_chat, source_post_link, csv_ro
         "is_premium": bool(user.is_premium),
         "source_chat": source_chat,
         "source_post_link": source_post_link,
+        "_reactions": dict(reactions),
     }
 
 
@@ -561,7 +621,7 @@ async def process_comment_batch(
     by_id = {user.id: user for user in fetched}
     for user_id in new_ids:
         user = by_id.get(user_id)
-        active = is_active_last_7_days(user)
+        active = is_active_last_4_days(user)
         activity_cache[user_id] = active
         if active and user:
             await save_qualifying_user(user, chat_id, source_post_link, csv_rows)
@@ -622,6 +682,110 @@ async def scrape_post_comments(
     return comments_processed
 
 
+async def scrape_post_reactions(
+    bot: Client,
+    app: Client,
+    chat_id,
+    post_id: int,
+    activity_cache: dict[int, bool],
+    csv_rows: dict,
+    source_post_link: str,
+) -> int:
+    peer = await bot.floodwait_handler(app.resolve_peer, chat_id)
+    offset: str | None = None
+    reactions_processed = 0
+    # user_id -> {reaction_key: count} gathered on this post before activity filter
+    pending: dict[int, dict[str, int]] = {}
+    users_by_id: dict[int, User] = {}
+
+    while True:
+        result = await bot.floodwait_handler(
+            app.invoke,
+            raw.functions.messages.GetMessageReactionsList(
+                peer=peer,
+                id=post_id,
+                limit=REACTION_LIST_LIMIT,
+                offset=offset,
+            ),
+        )
+        for raw_user in getattr(result, "users", None) or []:
+            user = User._parse(app, raw_user)
+            if isinstance(user, User):
+                users_by_id[user.id] = user
+
+        page = getattr(result, "reactions", None) or []
+        if not page:
+            break
+
+        reactions_processed += len(page)
+        for item in page:
+            peer_id = getattr(item, "peer_id", None)
+            if not isinstance(peer_id, raw.types.PeerUser):
+                continue
+            key = _reaction_key(getattr(item, "reaction", None))
+            if not key:
+                continue
+            user_reactions = pending.setdefault(peer_id.user_id, {})
+            user_reactions[key] = user_reactions.get(key, 0) + 1
+
+        offset = getattr(result, "next_offset", None) or None
+        if not offset:
+            break
+        if COMMENT_BATCH_SLEEP_SECONDS > 0:
+            await asyncio.sleep(COMMENT_BATCH_SLEEP_SECONDS)
+
+    if not pending:
+        return reactions_processed
+
+    missing_ids = [
+        user_id
+        for user_id in pending
+        if user_id not in csv_rows
+        and user_id not in activity_cache
+        and user_id not in users_by_id
+    ]
+    if missing_ids:
+        fetched = await fetch_users(bot, app, missing_ids)
+        for user in fetched:
+            users_by_id[user.id] = user
+
+    for user_id, reaction_counts in pending.items():
+        if user_id in csv_rows:
+            _merge_reactions(
+                csv_rows[user_id].setdefault("_reactions", {}), reaction_counts
+            )
+            continue
+
+        if user_id in activity_cache:
+            if not activity_cache[user_id]:
+                continue
+            user = users_by_id.get(user_id)
+            if user is None:
+                fetched = await fetch_users(bot, app, [user_id])
+                user = fetched[0] if fetched else None
+            if user:
+                await save_qualifying_user(
+                    user, chat_id, source_post_link, csv_rows, reaction_counts
+                )
+            continue
+
+        user = users_by_id.get(user_id)
+        if user is None:
+            fetched = await fetch_users(bot, app, [user_id])
+            user = fetched[0] if fetched else None
+            if user:
+                users_by_id[user.id] = user
+
+        active = is_active_last_4_days(user)
+        activity_cache[user_id] = active
+        if active and user:
+            await save_qualifying_user(
+                user, chat_id, source_post_link, csv_rows, reaction_counts
+            )
+
+    return reactions_processed
+
+
 async def run_scrape(
     bot: Client,
     message: Message,
@@ -651,11 +815,12 @@ async def run_scrape(
 
     total = len(post_ids)
     comments_processed = 0
+    reactions_processed = 0
     csv_rows: dict = {}
     activity_cache: dict[int, bool] = {}
     failed: list[dict] = []
     await asyncio.sleep(0.5)
-    await bot.floodwait_handler(_edit_progress, status, 0, total, 0, 0)
+    await bot.floodwait_handler(_edit_progress, status, 0, total, 0, 0, 0)
 
     for index, post_id in enumerate(post_ids, start=1):
         source_post_link = post_links.get(post_id) or build_post_link(chat, post_id)
@@ -670,12 +835,27 @@ async def run_scrape(
                 source_post_link,
                 discussion_chat_id,
             )
+            reactions_processed += await scrape_post_reactions(
+                bot,
+                app,
+                chat_id,
+                post_id,
+                activity_cache,
+                csv_rows,
+                source_post_link,
+            )
         except Exception as e:
             logger.exception("Failed to scrape post %s in chat %s", post_id, chat_id)
             failed.append({"post_id": post_id, "error": str(e)})
 
-        await bot.floodwait_handler(_edit_progress,
-            status, index, total, comments_processed, len(csv_rows)
+        await bot.floodwait_handler(
+            _edit_progress,
+            status,
+            index,
+            total,
+            comments_processed,
+            reactions_processed,
+            len(csv_rows),
         )
         if index < total:
             await asyncio.sleep(POST_SLEEP_SECONDS)
@@ -694,7 +874,7 @@ def _write_users_csv(path: str, csv_rows: dict) -> None:
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
         writer.writeheader()
-        writer.writerows(csv_rows.values())
+        writer.writerows(_csv_row(row) for row in csv_rows.values())
 
 
 def _finish_text(qualifying: int, failed: list[dict]) -> str:

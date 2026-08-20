@@ -1,5 +1,5 @@
 from database.core import Core
-
+from pyrogram.types import Message
 
 class UserForwardsDatabase(Core):
     def __init__(self, uri, database_name):
