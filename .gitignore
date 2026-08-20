@@ -139,3 +139,4 @@ dev_config.yaml
 delete_all.py
 get_message.py
 test.py
+scripts/get_post.py

@@ -6,9 +6,20 @@ import re
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 
+from bson import int64
 from pyrogram import Client, filters, raw
-from pyrogram.enums import UserStatus
-from pyrogram.types import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message, User
+from pyrogram.enums import ChatType, UserStatus
+from pyrogram.errors import MsgIdInvalid
+from pyrogram.types import (
+    Chat,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    User,
+)
 from pyromod.exceptions import ListenerStopped
 from pyromod.types import ListenerTypes
 
@@ -62,14 +73,11 @@ _MODE_MARKUP = InlineKeyboardMarkup(
     ]
 )
 
-_DONE_MARKUP = InlineKeyboardMarkup(
-    [
-        [
-            InlineKeyboardButton("✅ Done", callback_data="scrape_done_yes"),
-            InlineKeyboardButton("➕ Add more", callback_data="scrape_done_no"),
-        ],
-        [InlineKeyboardButton("❌ Cancel", callback_data="scrape_done_cancel")],
-    ]
+_SELECT_DONE = "✅ Done"
+_SELECT_CANCEL = "❌ Cancel"
+_SELECT_KEYBOARD = ReplyKeyboardMarkup(
+    [[KeyboardButton(_SELECT_DONE), KeyboardButton(_SELECT_CANCEL)]],
+    resize_keyboard=True,
 )
 
 _POST_LINK_RE = re.compile(
@@ -111,6 +119,68 @@ def _discussion_chat_id(chat) -> int | None:
     if linked is not None:
         return linked.id
     return getattr(chat, "linked_chat_id", None)
+
+
+def _message_has_reactions(message: Message | None) -> bool:
+    """Telegram returns MSG_ID_INVALID for GetMessageReactionsList when there are none."""
+    if not message:
+        return False
+    reactions = getattr(message, "reactions", None)
+    if not reactions:
+        return False
+    items = getattr(reactions, "reactions", None)
+    if items is not None:
+        return bool(items)
+    return True
+
+
+async def _resolve_reaction_target(
+    bot: Client,
+    app: Client,
+    chat: Chat,
+    post_id: int,
+) -> tuple[int, int] | None | str:
+    """Return (chat_id, message_id), None if unavailable, or 'no_reactions' to skip."""
+    if chat.type in {ChatType.GROUP, ChatType.SUPERGROUP}:
+        try:
+            message = await bot.floodwait_handler(app.get_messages, chat.id, post_id)
+        except Exception as e:
+            logger.debug(
+                "Could not fetch group post %s in %s for reactions: %s",
+                post_id,
+                chat.id,
+                e,
+            )
+            return None
+        if isinstance(message, list):
+            message = message[0] if message else None
+        if not message:
+            return None
+        if not _message_has_reactions(message):
+            return "no_reactions"
+        return chat.id, post_id
+
+    if chat.type != ChatType.CHANNEL:
+        return None
+
+    try:
+        discussion = await bot.floodwait_handler(
+            app.get_discussion_message, chat.id, post_id
+        )
+    except Exception as e:
+        logger.debug(
+            "No discussion message for channel %s post %s: %s",
+            chat.id,
+            post_id,
+            e,
+        )
+        return None
+
+    if not discussion or not getattr(discussion, "chat", None):
+        return None
+    if not _message_has_reactions(discussion):
+        return "no_reactions"
+    return discussion.chat.id, discussion.id
 
 
 def _user_id_from_raw(message: Message) -> int | None:
@@ -320,31 +390,52 @@ async def scrape(bot: Client, message: Message):
     if mode == "selected":
         post_ids = []
         seen_post_ids: set[int] = set()
+        prompt = (
+            "Forward posts from this channel/group.\n\n"
+            "You can also send post IDs or links (spaces/commas OK).\n\n"
+            f"Press {_SELECT_DONE} when finished, or {_SELECT_CANCEL} to abort."
+        )
+        first_ask = True
         while True:
-            ask = await message.chat.ask("""
-                Send one post reference now:\n
-
-• Forward a post from this channel/group
-• Enter the post ID
-• Send the post link
-
-You can send **multiple IDs or links** at once, separated by spaces or commas.
-
-**Example:**
-1
-https://t.me/channel/12, https://t.me/c/1234567890/45
-
-/cancel to cancel ❌""",
-                disable_web_page_preview=True,
-            )
-            if await is_input_cancelled(ask):
+            try:
+                ask = await message.chat.ask(
+                    prompt if first_ask else (
+                        f"Forward another post, or press {_SELECT_DONE} / {_SELECT_CANCEL}.\n"
+                        f"Selected so far: **{len(post_ids)}**"
+                    ),
+                    reply_markup=_SELECT_KEYBOARD,
+                    disable_web_page_preview=True,
+                )
+            except ListenerStopped:
+                await message.reply_text(
+                    "❌ Operation cancelled.",
+                    reply_markup=ReplyKeyboardRemove(),
+                )
                 return
+            except Exception as e:
+                await message.reply_text(
+                    f"🚫 Error: {e}",
+                    reply_markup=ReplyKeyboardRemove(),
+                )
+                return
+            first_ask = False
+
+            text = (ask.text or "").strip()
+            if text in {_SELECT_CANCEL, "Cancel", "/cancel"}:
+                await message.reply_text(
+                    "❌ Operation cancelled.",
+                    reply_markup=ReplyKeyboardRemove(),
+                )
+                return
+            if text in {_SELECT_DONE, "Done"}:
+                break
 
             new_ids: list[int] = []
             new_links: dict[int, str] = {}
-            invalid_tokens: list[str] = []
             forwarded_chat, forwarded_message_id = forward_post_ref(ask)
-            has_forward = forwarded_chat is not None and forwarded_message_id is not None
+            has_forward = (
+                forwarded_chat is not None and forwarded_message_id is not None
+            )
             if has_forward:
                 if _link_chat_matches(chat, forwarded_chat):
                     new_ids.append(forwarded_message_id)
@@ -352,16 +443,24 @@ https://t.me/channel/12, https://t.me/c/1234567890/45
                         forwarded_chat, forwarded_message_id
                     )
                 else:
-                    invalid_tokens.append("forwarded post (from a different chat)")
+                    await message.reply_text(
+                        "⚠️ That forwarded post is not from the selected channel/group."
+                    )
+                    continue
 
-            raw = (ask.text or "").strip()
-            if raw and not has_forward:
-                parsed_ids, invalid, parsed_links = parse_post_tokens(raw, chat)
+            if text and not has_forward:
+                parsed_ids, invalid, parsed_links = parse_post_tokens(text, chat)
                 new_ids.extend(parsed_ids)
                 new_links.update(parsed_links)
-                invalid_tokens.extend(invalid)
+                if invalid:
+                    await message.reply_text(
+                        f"⚠️ Invalid tokens (skipped): {', '.join(invalid)}"
+                    )
+                    continue
+                
 
             added_now = 0
+            noted: list[int] = []
             for post_id in new_ids:
                 if post_id in seen_post_ids:
                     continue
@@ -370,41 +469,27 @@ https://t.me/channel/12, https://t.me/c/1234567890/45
                 post_link_by_id[post_id] = new_links.get(
                     post_id, build_post_link(chat, post_id)
                 )
+                noted.append(post_id)
                 added_now += 1
 
-            if invalid_tokens:
-                await message.reply_text(
-                    f"⚠️ Invalid tokens (skipped): {', '.join(invalid_tokens)}"
-                )
             if not added_now:
                 await message.reply_text(
-                    "⚠️ No valid post id found in that input. Try again."
+                    "⚠️ No valid new post found. Forward a post from this chat, "
+                    f"or press {_SELECT_DONE} / {_SELECT_CANCEL}."
                 )
                 continue
 
-            try:
-                done_choice = await message.chat.ask(
-                    f"Added **{added_now}** post(s). Total selected: **{len(post_ids)}**.\n\nDone?",
-                    filters=filters.regex(r"^scrape_done_(yes|no|cancel)$"),
-                    listener_type=ListenerTypes.CALLBACK_QUERY,
-                    user_id=user_id,
-                    reply_markup=_DONE_MARKUP,
-                )
-            except ListenerStopped:
-                return await message.reply_text("❌ Operation cancelled.")
-            except Exception as e:
-                return await message.reply_text(f"🚫 Error: {e}")
+            noted_text = ", ".join(f"`{pid}`" for pid in noted)
+            await message.reply_text(
+                f"✅ Noted post(s): {noted_text}\n"
+                f"Total selected: **{len(post_ids)}**",
+            )
 
-            await done_choice.answer()
-            if done_choice.data == "scrape_done_cancel":
-                await done_choice.message.edit_text("❌ Operation cancelled.")
-                return
-            if done_choice.data == "scrape_done_yes":
-                with suppress(Exception):
-                    await done_choice.message.edit_reply_markup(None)
-                break
-            with suppress(Exception):
-                await done_choice.message.edit_reply_markup(None)
+        with suppress(Exception):
+            await message.reply_text(
+                "Selection complete.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
         if not post_ids:
             return await message.reply_text("❌ No valid post ids found.")
 
@@ -459,14 +544,20 @@ def _progress_text(
     comments_processed: int,
     reactions_processed: int,
     qualifying: int,
+    reactions_skipped: int = 0,
 ) -> str:
-    return (
-        "Scraping started...\n"
-        f"Posts processed: {processed} / {total}\n"
-        f"Comments processed: {comments_processed:,}\n"
-        f"Reactions processed: {reactions_processed:,}\n"
-        f"Qualifying users: {qualifying:,}"
-    )
+    lines = [
+        "Scraping started...",
+        f"Posts processed: {processed} / {total}",
+        f"Comments processed: {comments_processed:,}",
+        f"Reactions processed: {reactions_processed:,}",
+        f"Qualifying users: {qualifying:,}",
+    ]
+    if reactions_skipped:
+        lines.append(
+            f"Posts whose reactions could not be fetched: {reactions_skipped:,}"
+        )
+    return "\n".join(lines)
 
 
 def _reaction_key(reaction) -> str | None:
@@ -515,12 +606,18 @@ async def _edit_progress(
     comments_processed,
     reactions_processed,
     qualifying,
+    reactions_skipped=0,
 ):
     with suppress(Exception):
         await asyncio.sleep(0.5)
         await status.edit_text(
             _progress_text(
-                processed, total, comments_processed, reactions_processed, qualifying
+                processed,
+                total,
+                comments_processed,
+                reactions_processed,
+                qualifying,
+                reactions_skipped,
             )
         )
 
@@ -685,13 +782,14 @@ async def scrape_post_comments(
 async def scrape_post_reactions(
     bot: Client,
     app: Client,
-    chat_id,
-    post_id: int,
+    reaction_chat_id,
+    reaction_message_id: int,
+    source_chat,
     activity_cache: dict[int, bool],
     csv_rows: dict,
     source_post_link: str,
 ) -> int:
-    peer = await bot.floodwait_handler(app.resolve_peer, chat_id)
+    peer = await bot.floodwait_handler(app.resolve_peer, reaction_chat_id)
     offset: str | None = None
     reactions_processed = 0
     # user_id -> {reaction_key: count} gathered on this post before activity filter
@@ -699,15 +797,30 @@ async def scrape_post_reactions(
     users_by_id: dict[int, User] = {}
 
     while True:
-        result = await bot.floodwait_handler(
-            app.invoke,
-            raw.functions.messages.GetMessageReactionsList(
-                peer=peer,
-                id=post_id,
-                limit=REACTION_LIST_LIMIT,
-                offset=offset,
-            ),
+        logger.info(
+            "Scraping reactions for post %s in chat %s",
+            reaction_message_id,
+            reaction_chat_id,
         )
+        try:
+            result = await bot.floodwait_handler(
+                app.invoke,
+                raw.functions.messages.GetMessageReactionsList(
+                    peer=peer,
+                    id=reaction_message_id,
+                    limit=REACTION_LIST_LIMIT,
+                    offset=offset,
+                ),
+            )
+        except MsgIdInvalid:
+            # Telegram uses this when the message has no listable reactions.
+            logger.info(
+                "No listable reactions for message %s in %s",
+                reaction_message_id,
+                reaction_chat_id,
+            )
+            return reactions_processed
+
         for raw_user in getattr(result, "users", None) or []:
             user = User._parse(app, raw_user)
             if isinstance(user, User):
@@ -765,7 +878,7 @@ async def scrape_post_reactions(
                 user = fetched[0] if fetched else None
             if user:
                 await save_qualifying_user(
-                    user, chat_id, source_post_link, csv_rows, reaction_counts
+                    user, source_chat, source_post_link, csv_rows, reaction_counts
                 )
             continue
 
@@ -780,7 +893,7 @@ async def scrape_post_reactions(
         activity_cache[user_id] = active
         if active and user:
             await save_qualifying_user(
-                user, chat_id, source_post_link, csv_rows, reaction_counts
+                user, source_chat, source_post_link, csv_rows, reaction_counts
             )
 
     return reactions_processed
@@ -816,11 +929,12 @@ async def run_scrape(
     total = len(post_ids)
     comments_processed = 0
     reactions_processed = 0
+    reactions_skipped: list[int] = []
     csv_rows: dict = {}
     activity_cache: dict[int, bool] = {}
     failed: list[dict] = []
     await asyncio.sleep(0.5)
-    await bot.floodwait_handler(_edit_progress, status, 0, total, 0, 0, 0)
+    await bot.floodwait_handler(_edit_progress, status, 0, total, 0, 0, 0, 0)
 
     for index, post_id in enumerate(post_ids, start=1):
         source_post_link = post_links.get(post_id) or build_post_link(chat, post_id)
@@ -835,18 +949,41 @@ async def run_scrape(
                 source_post_link,
                 discussion_chat_id,
             )
-            reactions_processed += await scrape_post_reactions(
-                bot,
-                app,
-                chat_id,
-                post_id,
-                activity_cache,
-                csv_rows,
-                source_post_link,
-            )
         except Exception as e:
-            logger.exception("Failed to scrape post %s in chat %s", post_id, chat_id)
+            logger.exception("Failed to scrape comments for post %s in chat %s", post_id, chat_id)
             failed.append({"post_id": post_id, "error": str(e)})
+        else:
+            try:
+                reaction_target = await _resolve_reaction_target(
+                    bot, app, chat, post_id
+                )
+                if reaction_target == "no_reactions":
+                    reactions_skipped.append(post_id)
+                    logger.info("No reactions for post %s; skipping reaction scrape", post_id)
+                elif reaction_target:
+                    reaction_chat_id, reaction_message_id = reaction_target
+                    count = await scrape_post_reactions(
+                        bot,
+                        app,
+                        reaction_chat_id,
+                        reaction_message_id,
+                        chat_id,
+                        activity_cache,
+                        csv_rows,
+                        source_post_link,
+                    )
+                    if count:
+                        reactions_processed += count
+                    else:
+                        reactions_skipped.append(post_id)
+                        logger.info(
+                            "No reaction users for post %s; skipping", post_id
+                        )
+            except Exception as e:
+                logger.exception(
+                    "Failed to scrape reactions for post %s in chat %s", post_id, chat_id
+                )
+                failed.append({"post_id": post_id, "error": f"reactions: {e}"})
 
         await bot.floodwait_handler(
             _edit_progress,
@@ -856,17 +993,19 @@ async def run_scrape(
             comments_processed,
             reactions_processed,
             len(csv_rows),
+            len(reactions_skipped),
         )
         if index < total:
             await asyncio.sleep(POST_SLEEP_SECONDS)
 
     logger.info(
-        "Scrape of %s finished: %s qualifying users, failed posts %s",
+        "Scrape of %s finished: %s qualifying users, failed posts %s, no-reaction posts %s",
         chat_id,
         len(csv_rows),
         [item["post_id"] for item in failed],
+        reactions_skipped,
     )
-    await finish_scrape(bot, message, status, csv_rows, failed)
+    await finish_scrape(bot, message, status, csv_rows, failed, reactions_skipped)
 
 
 def _write_users_csv(path: str, csv_rows: dict) -> None:
@@ -877,11 +1016,19 @@ def _write_users_csv(path: str, csv_rows: dict) -> None:
         writer.writerows(_csv_row(row) for row in csv_rows.values())
 
 
-def _finish_text(qualifying: int, failed: list[dict]) -> str:
+def _finish_text(
+    qualifying: int,
+    failed: list[dict],
+    reactions_skipped: list[int] | None = None,
+) -> str:
     if qualifying:
         lines = ["Scrape finished.", f"Qualifying users: {qualifying:,}"]
     else:
         lines = ["Scrape finished.", "No qualifying users found."]
+    if reactions_skipped:
+        lines.append(
+            f"Posts whose reactions could not be fetched: {len(reactions_skipped)}"
+        )
     if failed:
         ids = ", ".join(str(item["post_id"]) for item in failed)
         lines.append(f"Failed posts: {ids}")
@@ -894,6 +1041,7 @@ async def finish_scrape(
     status: Message,
     csv_rows: dict,
     failed: list[dict],
+    reactions_skipped: list[int] | None = None,
 ):
     if csv_rows:
         admin_id = message.from_user.id
@@ -916,5 +1064,6 @@ async def finish_scrape(
 
     with suppress(Exception):
         await bot.floodwait_handler(
-            status.edit_text, _finish_text(len(csv_rows), failed)
+            status.edit_text,
+            _finish_text(len(csv_rows), failed, reactions_skipped),
         )
