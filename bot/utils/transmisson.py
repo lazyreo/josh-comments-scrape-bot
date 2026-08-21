@@ -22,7 +22,7 @@ from database import db
 async def forward_message(
     bot: Client, app: Client, message: types.Message, user_id: int, config: dict
 ):
-    """Forward a message to config['dest'] using the session client only."""
+    """Copy a message to config['dest'] using the session client only."""
     dest = config["dest"]
     rules = config.get("text_replacements") or []
     log = None
@@ -72,7 +72,7 @@ async def forward_message(
 
     if not log:
         return await bot.send_message(
-            user_id, "Failed to forward the message. Try again."
+            user_id, "Failed to copy the message. Try again."
         )
 
     if file_path:

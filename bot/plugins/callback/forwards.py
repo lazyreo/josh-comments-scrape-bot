@@ -128,7 +128,7 @@ async def add_forward(bot: Client, message: CallbackQuery):
             "Send the chat you want to copy from:\n"
             "• @username\n"
             "• chat / user id\n"
-            "• or forward any message from that chat\n\n"
+            "• or copy any message from that chat\n\n"
             "The connected account must be able to see that chat.",
             user_id=user_id,
             reply_markup=_CANCEL_MARKUP,
@@ -156,7 +156,7 @@ async def add_forward(bot: Client, message: CallbackQuery):
             "Send the chat you want to copy to:\n"
             "• @username\n"
             "• chat / user id\n"
-            "• or forward any message from that chat\n\n"
+            "• or copy any message from that chat\n\n"
             "The connected account must be able to post there.",
             user_id=user_id,
             reply_markup=_CANCEL_MARKUP,
@@ -185,7 +185,7 @@ async def add_forward(bot: Client, message: CallbackQuery):
     try:
         choice = await chat.ask(
             "🔤 **Text replacements**\n\n"
-            "Replace text/captions before forwarding?",
+            "Replace text/captions before copying?",
             filters=filters.regex(r"^fwd_repl_(yes|skip|cancel)$"),
             listener_type=ListenerTypes.CALLBACK_QUERY,
             user_id=user_id,

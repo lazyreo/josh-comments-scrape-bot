@@ -331,11 +331,11 @@ async def scrape(bot: Client, message: Message):
         )
 
     ask = await message.chat.ask(
-        "Send the group or channel **id or username** or **forward a message from that chat** to scrape comments from.\n\n"
+        "Send the group or channel **id or username** or **copy a message from that chat** to scrape comments from.\n\n"
         "Example:\n"
         "• `@channel`\n"
         "• `-1001234567890`\n\n"
-        "• `forward a message from that chat`\n"
+        "• `copy a message from that chat`\n"
         "/cancel to cancel ❌"
     )
     if await is_input_cancelled(ask):
@@ -344,7 +344,7 @@ async def scrape(bot: Client, message: Message):
     chat_ref, _ = parse_chat_input(ask)
     if chat_ref is None:
         return await message.reply_text(
-            "⚠️ Send a group or channel id, username, or forward a message from that chat."
+            "⚠️ Send a group or channel id, username, or copy a message from that chat."
         )
 
     # chat = await resolve_chat(app, chat_ref)
@@ -391,7 +391,7 @@ async def scrape(bot: Client, message: Message):
         post_ids = []
         seen_post_ids: set[int] = set()
         prompt = (
-            "Forward posts from this channel/group.\n\n"
+            "Copy posts from this channel/group here.\n\n"
             "You can also send post IDs or links (spaces/commas OK).\n\n"
             f"Press {_SELECT_DONE} when finished, or {_SELECT_CANCEL} to abort."
         )
@@ -400,7 +400,7 @@ async def scrape(bot: Client, message: Message):
             try:
                 ask = await message.chat.ask(
                     prompt if first_ask else (
-                        f"Forward another post, or press {_SELECT_DONE} / {_SELECT_CANCEL}.\n"
+                        f"Copy another post, or press {_SELECT_DONE} / {_SELECT_CANCEL}.\n"
                         f"Selected so far: **{len(post_ids)}**"
                     ),
                     reply_markup=_SELECT_KEYBOARD,
@@ -444,7 +444,7 @@ async def scrape(bot: Client, message: Message):
                     )
                 else:
                     await message.reply_text(
-                        "⚠️ That forwarded post is not from the selected channel/group."
+                        "⚠️ That copied post is not from the selected channel/group."
                     )
                     continue
 
@@ -474,7 +474,7 @@ async def scrape(bot: Client, message: Message):
 
             if not added_now:
                 await message.reply_text(
-                    "⚠️ No valid new post found. Forward a post from this chat, "
+                    "⚠️ No valid new post found. Copy a post from this chat, "
                     f"or press {_SELECT_DONE} / {_SELECT_CANCEL}."
                 )
                 continue

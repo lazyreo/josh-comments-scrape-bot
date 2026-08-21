@@ -45,14 +45,14 @@ class ContextVariables(object):
 class Script(object):
     START_MESSAGE = """💾 **Welcome!**
 
-This bot forwards messages from a **Source** chat to a **Destination** chat using your connected Telegram account.
+This bot copies messages from a **Source** chat to a **Destination** chat using your connected Telegram account.
 
 **Simple steps:**
 1. **Log in** — tap Account (or /account)
 2. **Add a forward** — tap Forwards → choose Source and Destination
 3. New messages from the Source are copied to the Destination with your account
 
-You can also paste a `t.me` link to forward that message (if that Source has a forward configured)."""
+You can also paste a `t.me` link to copy that message (if that Source has a forward configured)."""
 
     RESTART_MESSAGE = "🔄 **The bot is restarting. Re-download your in-progress files in a few seconds.**"
 
@@ -61,9 +61,9 @@ You can also paste a `t.me` link to forward that message (if that Source has a f
 1. **/account** — Log in with the Telegram account that can see the Source and post to the Destination.
 
 2. **Forwards** — tap Forwards → Add.
-   Send the Source (@username, id, or a forwarded message), then the Destination the same way.
+   Send the Source (@username, id, or a copied message), then the Destination the same way.
 
-3. **Paste a link** — Send a `https://t.me/...` link to forward that message through an existing Source → Destination forward.
+3. **Paste a link** — Send a `https://t.me/...` link to copy that message through an existing Source → Destination forward.
 
 4. **/scrape** — Collect the users who commented on a specific post, or collect commenters from all posts in a channel.
  - **Specific post:** Send the post link when prompted.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Auto-forward source messages to destinations via the logged-in session."""
+"""Auto-copy source messages to destinations via the logged-in session."""
 
 import logging
 from contextlib import suppress
@@ -29,7 +29,7 @@ async def _send_to_dest(
     dest_id: int,
     text_replacements: list | None = None,
 ):
-    """Forward via session; fall back to copy, then text/caption re-send."""
+    """Copy via session; fall back to text/caption re-send."""
     rules = text_replacements or []
     raw = message.text or message.caption
     if rules and raw:
@@ -96,7 +96,7 @@ async def on_channel_message(client: Client, message: Message):
             log = await _send_to_dest(client, message, dest_id, rules)
         except Exception as e:
             logger.warning(
-                "Forward failed %s -> %s for user %s: %s",
+                "Copy failed %s -> %s for user %s: %s",
                 source_id,
                 dest_id,
                 user_id,
