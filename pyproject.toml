@@ -14,5 +14,5 @@ dependencies = [
     "pydantic-settings>=2.15.0",
     "reloadium>=1.5.1",
     "tabulate>=0.10.0",
-    "tgcrypto>=1.2.5",
+    # "tgcrypto>=1.2.5",
 ]
