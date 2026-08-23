@@ -6,6 +6,22 @@ _POST_LINK_RE = re.compile(
     r"(?:https?://)?(?:t\.me|telegram\.me|telegram\.dog)/[^\s,]+",
     re.IGNORECASE,
 )
+# Chat path before post id: username/ or c/123456/
+_TG_CHAT_PREFIX = (
+    r"(?:https?://)?(?:t\.me|telegram\.me|telegram\.dog)/"
+    r"(?:c/\d+/|[^\s,/]+/)"
+)
+# 328910-328920
+# https://t.me/chan/328910 - 328920
+# https://t.me/chan/328910 - https://t.me/chan/328920
+_POST_RANGE_RE = re.compile(
+    rf"(?:({_TG_CHAT_PREFIX}))?"
+    r"(\d+)\s*[-–—]\s*"
+    rf"(?:{_TG_CHAT_PREFIX})?"
+    r"(\d+)",
+    re.IGNORECASE,
+)
+_MAX_POST_RANGE = 500
 
 
 def _normalize_post_link(link: str) -> str:
@@ -76,6 +92,14 @@ def link_chat_matches(chat, link_chat_id) -> bool:
     return False
 
 
+def _expand_range(start: int, end: int) -> list[int] | None:
+    if start > end:
+        start, end = end, start
+    if end - start + 1 > _MAX_POST_RANGE:
+        return None
+    return list(range(start, end + 1))
+
+
 def parse_post_tokens(
     text: str, chat
 ) -> tuple[list[int], list[str], dict[int, str]]:
@@ -84,8 +108,39 @@ def parse_post_tokens(
     post_links: dict[int, str] = {}
     seen: set[int] = set()
 
-    links = _POST_LINK_RE.findall(text)
-    remainder = _POST_LINK_RE.sub(" ", text)
+    def _add(post_id: int, link: str | None = None) -> None:
+        if post_id in seen:
+            return
+        seen.add(post_id)
+        post_ids.append(post_id)
+        if link:
+            post_links[post_id] = link
+
+    # Ranges first so "link/328910 - 328920" is not split into a lone link + junk.
+    for match in _POST_RANGE_RE.finditer(text):
+        link_prefix, start_s, end_s = match.groups()
+        start, end = int(start_s), int(end_s)
+        expanded = _expand_range(start, end)
+        if expanded is None:
+            invalid.append(match.group(0).strip())
+            continue
+
+        if link_prefix:
+            sample = _normalize_post_link(f"{link_prefix}{start}")
+            parts = get_link_parts(sample)
+            if not parts or not link_chat_matches(chat, parts[0]):
+                invalid.append(match.group(0).strip())
+                continue
+            for post_id in expanded:
+                _add(post_id, _normalize_post_link(f"{link_prefix}{post_id}"))
+        else:
+            for post_id in expanded:
+                _add(post_id)
+
+    remainder = _POST_RANGE_RE.sub(" ", text)
+
+    links = _POST_LINK_RE.findall(remainder)
+    remainder = _POST_LINK_RE.sub(" ", remainder)
 
     for raw_link in links:
         link = _normalize_post_link(raw_link)
@@ -93,22 +148,14 @@ def parse_post_tokens(
         if not parts or not link_chat_matches(chat, parts[0]):
             invalid.append(raw_link)
             continue
-        post_id = parts[1]
-        if post_id in seen:
-            continue
-        seen.add(post_id)
-        post_ids.append(post_id)
-        post_links[post_id] = link
+        _add(parts[1], link)
 
     for token in re.split(r"[\s,]+", remainder):
         token = token.strip()
         if not token:
             continue
         if token.isdigit():
-            post_id = int(token)
-            if post_id not in seen:
-                seen.add(post_id)
-                post_ids.append(post_id)
+            _add(int(token))
             continue
         invalid.append(token)
 

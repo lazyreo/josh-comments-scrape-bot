@@ -111,7 +111,10 @@ async def scrape(bot: Client, message: Message):
         seen_post_ids: set[int] = set()
         prompt = (
             "Copy posts from this channel/group here.\n\n"
-            "You can also send post IDs or links (spaces/commas OK).\n\n"
+            "You can also send post IDs, links, or a **range**:\n"
+            "• `328910-328920`\n"
+            "• `https://t.me/channel/328910 - 328920`\n"
+            "• `https://t.me/channel/328910 - https://t.me/channel/328920`\n\n"
             "Press ✅ Done when finished, or ❌ Cancel to abort."
         )
         first_ask = True
@@ -176,7 +179,8 @@ async def scrape(bot: Client, message: Message):
                 new_links.update(parsed_links)
                 if invalid:
                     await message.reply_text(
-                        f"⚠️ Invalid tokens (skipped): {', '.join(invalid)}"
+                        f"⚠️ Invalid tokens (skipped): {', '.join(invalid)}\n"
+                        "Tip: ranges must match this chat and be at most 500 posts."
                     )
                     continue
 
@@ -200,7 +204,10 @@ async def scrape(bot: Client, message: Message):
                 )
                 continue
 
-            noted_text = ", ".join(f"`{pid}`" for pid in noted)
+            if len(noted) > 20 and noted == list(range(noted[0], noted[-1] + 1)):
+                noted_text = f"`{noted[0]}`–`{noted[-1]}` ({len(noted)} posts)"
+            else:
+                noted_text = ", ".join(f"`{pid}`" for pid in noted)
             await message.reply_text(
                 f"✅ Noted post(s): {noted_text}\n"
                 f"Total selected: **{len(post_ids)}**",
