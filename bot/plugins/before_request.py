@@ -14,5 +14,5 @@ async def before_request(_: Client, update: Message | CallbackQuery):
 
 
     admins = await get_admins()
-    if user.id not in admins or user.username not in admins:
+    if user.id not in admins and user.username not in admins:
         update.stop_propagation()
