@@ -35,7 +35,7 @@ async def addadmin(client: Client, message: Message):
         await message.reply_text("Invalid user ID")
         return
 
-    added = await add_admin(user_id)
+    added = await add_admin(user.id)
     if added:
         await message.reply_text("Admin added successfully")
     else:
