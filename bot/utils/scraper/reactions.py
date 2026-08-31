@@ -20,9 +20,7 @@ def message_has_reactions(message: Message | None) -> bool:
     if not reactions:
         return False
     items = getattr(reactions, "reactions", None)
-    if items is not None:
-        return bool(items)
-    return True
+    return bool(items)
 
 
 def reaction_key(reaction) -> str | None:
