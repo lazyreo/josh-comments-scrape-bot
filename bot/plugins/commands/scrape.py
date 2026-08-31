@@ -32,7 +32,6 @@ _MODE_MARKUP = InlineKeyboardMarkup(
     ]
 )
 
-
 @Client.on_message(
     filters.command("scrape") & filters.private & filters.incoming
 )

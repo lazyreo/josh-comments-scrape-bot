@@ -34,7 +34,7 @@ class User(Client):
             api_id=settings.API_ID,
             api_hash=settings.API_HASH,
             session_string=session_string,
-            plugins=dict(root="user/plugins"),
+            plugins=dict(root="bot/plugins/user"),
             **kwargs,
         )
 
@@ -73,7 +73,7 @@ class Bot(Client):
             api_id=settings.API_ID,
             api_hash=settings.API_HASH,
             bot_token=settings.BOT_TOKEN,
-            plugins=dict(root="bot/plugins"),
+            plugins=dict(root="bot/plugins", exclude=["user"]),
         )
 
     async def start(self, *args, **kwargs):

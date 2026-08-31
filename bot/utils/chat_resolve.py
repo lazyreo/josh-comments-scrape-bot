@@ -1,7 +1,12 @@
 """Resolve Telegram chat references from user input."""
 
 from pyrogram import Client, errors
-from pyrogram.types import Message
+from pyrogram.enums import ChatType
+from pyrogram.types import Chat, Message
+
+from bot.utils.helpers import get_link_parts
+
+_GROUP_TYPES = (ChatType.GROUP, ChatType.SUPERGROUP)
 
 
 def chat_title(chat) -> str:
@@ -39,6 +44,7 @@ def forward_post_ref(message: Message):
 
 
 def parse_chat_input(ask: Message):
+    """Return (chat_ref, original_message_id | None)."""
     forwarded_chat, forwarded_post_id = forward_post_ref(ask)
     if forwarded_chat:
         return forwarded_chat.id, forwarded_post_id
@@ -47,6 +53,11 @@ def parse_chat_input(ask: Message):
     if not ask.text:
         return None, None
     text = ask.text.strip()
+    parts = get_link_parts(text)
+    if parts:
+        chat_id, message_id, topic_tail = parts
+        # 4-part forum links store the real message id in topic_tail
+        return chat_id, topic_tail if topic_tail is not None else message_id
     if text.replace("-", "").isdigit():
         return int(text), None
     return text.replace("@", ""), None
@@ -65,3 +76,24 @@ async def resolve_chat(app: Client, chat_ref):
         raise
     except Exception:
         return None
+
+
+async def resolve_topic_id(
+    app: Client,
+    chat: Chat | None,
+    message_id: int | None,
+) -> int | None:
+    """Fetch the original message and read its forum topic / thread id."""
+    if not chat or chat.type not in _GROUP_TYPES or not message_id:
+        return None
+    try:
+        msg = await app.get_messages(chat.id, message_id)
+    except errors.FloodWait:
+        raise
+    except Exception:
+        return None
+    if not msg or getattr(msg, "empty", False):
+        return None
+    if msg.topic is not None:
+        return msg.topic.id
+    return msg.message_thread_id

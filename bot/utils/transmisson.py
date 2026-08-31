@@ -33,7 +33,7 @@ async def forward_message(
         new_text = apply_text_replacements(str(raw), rules)
         if message.media:
             with suppress(Exception):
-                log = await message.copy(chat_id=dest, caption=new_text, link_preview_options=types.LinkPreviewOptions(is_disabled=True))
+                log = await message.copy(chat_id=dest, caption=new_text)
             if not log:
                 file_path = await download_media(bot, user_id, message)
                 if file_path:
@@ -56,7 +56,7 @@ async def forward_message(
 
         if not log:
             with suppress(Exception):
-                log = await message.copy(chat_id=dest, link_preview_options=types.LinkPreviewOptions(is_disabled=True))
+                log = await message.copy(chat_id=dest)
 
         if not log:
             if message.text:

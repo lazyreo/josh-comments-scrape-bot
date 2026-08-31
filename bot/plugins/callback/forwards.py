@@ -9,7 +9,12 @@ from pyrogram.types import (
 from pyromod.exceptions import ListenerStopped
 from pyromod.types import ListenerTypes
 
-from bot.utils.chat_resolve import chat_title, parse_chat_ref, resolve_chat
+from bot.utils.chat_resolve import (
+    chat_title,
+    parse_chat_input,
+    resolve_chat,
+    resolve_topic_id,
+)
 from bot.utils.forward_sources import refresh_active_sources
 from bot.utils.helpers import get_user_client
 from database import db
@@ -126,9 +131,9 @@ async def add_forward(bot: Client, message: CallbackQuery):
         ask = await chat.ask(
             "📥 **Source**\n\n"
             "Send the chat you want to copy from:\n"
-            "• @username\n"
-            "• chat / user id\n"
-            "• or copy any message from that chat\n\n"
+            "• @username / chat id\n"
+            "• or forward a message from that chat "
+            "(forward from the topic if it's a forum)\n\n"
             "The connected account must be able to see that chat.",
             user_id=user_id,
             reply_markup=_CANCEL_MARKUP,
@@ -138,7 +143,7 @@ async def add_forward(bot: Client, message: CallbackQuery):
     except Exception as e:
         return await message.message.reply_text(f"🚫 Error: {e}", reply_markup=back)
 
-    source_ref = parse_chat_ref(ask)
+    source_ref, source_msg_id = parse_chat_input(ask)
     if source_ref is None:
         return await ask.reply("⚠️ Invalid source. Try again.", reply_markup=back)
 
@@ -151,12 +156,17 @@ async def add_forward(bot: Client, message: CallbackQuery):
         )
 
     try:
+        source_topic_id = await resolve_topic_id(app, source, source_msg_id)
+    except Exception as e:
+        return await message.message.reply_text(f"🚫 Error: {e}", reply_markup=back)
+
+    try:
         ask = await chat.ask(
             "📤 **Destination**\n\n"
             "Send the chat you want to copy to:\n"
-            "• @username\n"
-            "• chat / user id\n"
-            "• or copy any message from that chat\n\n"
+            "• @username / chat id\n"
+            "• or forward a message from that chat "
+            "(forward from the topic if it's a forum)\n\n"
             "The connected account must be able to post there.",
             user_id=user_id,
             reply_markup=_CANCEL_MARKUP,
@@ -166,7 +176,7 @@ async def add_forward(bot: Client, message: CallbackQuery):
     except Exception as e:
         return await message.message.reply_text(f"🚫 Error: {e}", reply_markup=back)
 
-    dest_ref = parse_chat_ref(ask)
+    dest_ref, dest_msg_id = parse_chat_input(ask)
     if dest_ref is None:
         return await ask.reply("⚠️ Invalid destination. Try again.", reply_markup=back)
 
@@ -177,6 +187,11 @@ async def add_forward(bot: Client, message: CallbackQuery):
             "Join the chat with the connected account and try again.",
             reply_markup=back,
         )
+
+    try:
+        dest_topic_id = await resolve_topic_id(app, dest, dest_msg_id)
+    except Exception as e:
+        return await message.message.reply_text(f"🚫 Error: {e}", reply_markup=back)
 
     source_name = chat_title(source)
     dest_name = chat_title(dest)
@@ -273,13 +288,17 @@ async def add_forward(bot: Client, message: CallbackQuery):
         dest_id=dest.id,
         dest_title=dest_name,
         text_replacements=text_replacements,
+        source_topic_id=source_topic_id,
+        dest_topic_id=dest_topic_id,
     )
     await refresh_active_sources()
 
     text = (
         f"✅ Forward added\n\n"
-        f"**From:** {source_name} (`{source.id}`)\n"
-        f"**To:** {dest_name} (`{dest.id}`)\n"
+        f"**From:** {source_name} (`{source.id}`)"
+        f"{f' topic `{source_topic_id}`' if source_topic_id else ''}\n"
+        f"**To:** {dest_name} (`{dest.id}`)"
+        f"{f' topic `{dest_topic_id}`' if dest_topic_id else ''}\n"
     )
     if text_replacements:
         text += f"**Replacements:** {len(text_replacements)}\n"
@@ -329,9 +348,15 @@ async def view_forward(_, message: CallbackQuery):
 
     text = "**Forward details**\n\n"
     text += f"📥 Source: {row['source_title']}\n"
-    text += f"   `{row['source_id']}`\n"
+    text += f"   `{row['source_id']}`"
+    if row.get("source_topic_id"):
+        text += f" · topic `{row['source_topic_id']}`"
+    text += "\n"
     text += f"📤 Destination: {row['dest_title']}\n"
-    text += f"   `{row['dest_id']}`\n"
+    text += f"   `{row['dest_id']}`"
+    if row.get("dest_topic_id"):
+        text += f" · topic `{row['dest_topic_id']}`"
+    text += "\n"
     text += f"📊 Status: {'✅ Active' if row['status'] else '❌ Inactive'}\n\n"
     text += f"🔤 **Replacements** ({len(rules)}):\n"
     text += _format_replacements(rules)
