@@ -147,13 +147,15 @@ async def add_forward(bot: Client, message: CallbackQuery):
     if source_ref is None:
         return await ask.reply("⚠️ Invalid source. Try again.", reply_markup=back)
 
-    source = await resolve_chat(app, source_ref)
+    source, source_err = await resolve_chat(app, source_ref)
     if not source:
-        return await ask.reply(
+        text = (
             "⚠️ Could not find that source.\n"
-            "Join the chat with the connected account and try again.",
-            reply_markup=back,
+            "Join the chat with the connected account and try again."
         )
+        if source_err:
+            text += f"\nError: {type(source_err).__name__}"
+        return await ask.reply(text, reply_markup=back)
 
     try:
         source_topic_id = await resolve_topic_id(app, source, source_msg_id)
@@ -180,13 +182,15 @@ async def add_forward(bot: Client, message: CallbackQuery):
     if dest_ref is None:
         return await ask.reply("⚠️ Invalid destination. Try again.", reply_markup=back)
 
-    dest = await resolve_chat(app, dest_ref)
+    dest, dest_err = await resolve_chat(app, dest_ref)
     if not dest:
-        return await ask.reply(
+        text = (
             "⚠️ Could not find that destination.\n"
-            "Join the chat with the connected account and try again.",
-            reply_markup=back,
+            "Join the chat with the connected account and try again."
         )
+        if dest_err:
+            text += f"\nError: {type(dest_err).__name__}"
+        return await ask.reply(text, reply_markup=back)
 
     try:
         dest_topic_id = await resolve_topic_id(app, dest, dest_msg_id)

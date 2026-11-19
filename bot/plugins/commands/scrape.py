@@ -66,7 +66,7 @@ async def scrape(bot: Client, message: Message):
             "⚠️ Send a group or channel id, username, or copy a message from that chat."
         )
 
-    chat = await bot.floodwait_handler(resolve_chat, app, chat_ref)
+    chat, _ = await bot.floodwait_handler(resolve_chat, app, chat_ref)
     if not chat:
         return await message.reply_text(
             "⚠️ Could not access that chat.\n"
